@@ -1,2 +1,2 @@
-# mcl
-my class library
+# mysdk
+my development environment with cmake.
