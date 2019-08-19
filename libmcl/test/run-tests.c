@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
 		return EXIT_FAILURE;
 
 	argv = uv_setup_args(argc, argv);
-	return run_test_hello();
+	//return run_test_hello();
 
 	switch (argc) {
 	case 1: return run_tests(0);

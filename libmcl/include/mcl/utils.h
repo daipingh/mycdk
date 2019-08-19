@@ -16,6 +16,11 @@ MCL_APIDECL const void *mcl_memrmem_sunday(const void *src, size_t srclen, const
 
 MCL_APIDECL size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out);
 MCL_APIDECL size_t mcl_hex_encode(const unsigned char *in, size_t len, char *out);
+MCL_APIDECL size_t mcl_base64_decode(const char *in, size_t len, unsigned char *out);
+MCL_APIDECL size_t mcl_base64_encode(const unsigned char *in, size_t len, char *out);
+
+MCL_APIDECL size_t mcl_urlencode(const char *in, size_t len, char *out, size_t out_size);
+MCL_APIDECL size_t mcl_urldecode(const char *in, size_t len, char *out, size_t out_size);
 
 
 MCL_END_EXTERN_C

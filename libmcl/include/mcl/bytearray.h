@@ -4,9 +4,9 @@
 
 #include "lang.h"
 #include "utils.h"
-#include <memory.h>		// memcpy
-#include <malloc.h>		// malloc
-#include <string.h>		// strlen
+#include <memory.h> // memcpy
+#include <malloc.h> // malloc
+#include <string.h> // strlen
 
 
 typedef struct mcl_bytearray_s mcl_bytearray_t;
@@ -16,7 +16,7 @@ struct mcl_bytearray_s {
 	size_t cap;    /*!< 数组容量 */
 	size_t len;    /*!< 数据长度 */
 	size_t pos;    /*!< 当前位置 */
-	size_t selpos; /*!< 选中长度 */
+	size_t selpos; /*!< 选中位置 */
 	size_t selcnt; /*!< 选中长度 */
 };
 
@@ -42,11 +42,11 @@ MCL_INLDECL mcl_bytearray_t *mcl_bytearray_new(size_t cap)
 {
 	mcl_bytearray_t *_this = (mcl_bytearray_t *)malloc(sizeof(mcl_bytearray_t) + cap);
 	if (_this != NULL)
-		mcl_bytearray_init(_this, (uint8_t *)&_this[1], cap, 0);
+		mcl_bytearray_init(_this, &_this[1], cap, 0);
 	return _this;
 }
 
-MCL_INLDECL size_t mcl_bytearray_copy(const mcl_bytearray_t *_this, uint8_t *dest, size_t maxlen)
+MCL_INLDECL size_t mcl_bytearray_copy(const mcl_bytearray_t *_this, void *dest, size_t maxlen)
 {
 	if (_this->pos >= _this->len)
 		return 0;
@@ -56,7 +56,7 @@ MCL_INLDECL size_t mcl_bytearray_copy(const mcl_bytearray_t *_this, uint8_t *des
 	return maxlen;
 }
 
-MCL_INLDECL size_t mcl_bytearray_read(mcl_bytearray_t *_this, uint8_t *dest, size_t maxlen)
+MCL_INLDECL size_t mcl_bytearray_read(mcl_bytearray_t *_this, void *dest, size_t maxlen)
 {
 	if (_this->pos >= _this->len)
 		return 0;
@@ -176,7 +176,7 @@ protected:
 	void len(int l) { c_imp.len = l; }
 	void pos(int p) { c_imp.pos = p; }
 	void sel(int s) { c_imp.sel = s; }
-	void head(uint8_t *h) { c_imp.head = h; }
+	void head(void *h) { c_imp.head = (uint8_t *)h; }
 
 	void swap_space(BasicByteArray &right) {
 		std::swap(c_imp.cap, right.c_imp.cap);
@@ -184,7 +184,7 @@ protected:
 	}
 public:
 	virtual ~BasicByteArray() {}
-	BasicByteArray(uint8_t *head, int cap, int len) {
+	BasicByteArray(void *head, int cap, int len) {
 		mcl_bytearray_init(&c_imp, head, cap, len);
 	}
 	uint8_t *head() { return c_imp.head; }
@@ -205,8 +205,8 @@ public:
 	int seek(int pos) { return mcl_bytearray_seek(&c_imp, pos); }
 
 	int find(const void *dst, int len) { return mcl_bytearray_find(&c_imp, dst, len); }
-	int read(uint8_t *dst, int max) { return mcl_bytearray_read(&c_imp, (uint8_t *)dst, max); }
-	int copy(uint8_t *dst, int max) const { return mcl_bytearray_copy(&c_imp, (uint8_t *)dst, max); }
+	int read(void *dst, int max) { return mcl_bytearray_read(&c_imp, dst, max); }
+	int copy(void *dst, int max) const { return mcl_bytearray_copy(&c_imp, dst, max); }
 	int append(const mcl_bytearray_t &obj) { return append(obj.head, obj.len); }
 	int append(const mcl_bytearray_t *obj) { return append(obj->head, obj->len); }
 	int append(const void *src, int len) {
@@ -229,15 +229,15 @@ public:
 	BasicByteArray &clear() { len(0); sel(0); pos(0); return *this; }
 
 	const BasicByteArray sub() const {
-		return BasicByteArray((uint8_t *)head() + pos(), selc(), selc());
+		return BasicByteArray(head() + pos(), selc(), selc());
 	}
 	const BasicByteArray sub(int pos) const {
 		int sublen = len() - pos;
-		return BasicByteArray((uint8_t *)head() + pos, sublen, sublen);
+		return BasicByteArray(head() + pos, sublen, sublen);
 	}
 	const BasicByteArray sub(int pos, int len) const {
 		int sublen = MCL_MIN(this->len() - pos, len);
-		return BasicByteArray((uint8_t *)head() + pos, sublen, sublen);
+		return BasicByteArray(head() + pos, sublen, sublen);
 	}
 
 #ifdef MCL_CXX11_VART

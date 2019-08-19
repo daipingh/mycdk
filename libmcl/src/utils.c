@@ -1,25 +1,8 @@
 
 #include "utils.h"
+#include "defs.h"
 #include <memory.h>
 #include <string.h>
-
-
-/* Macros for character classes; depends on strict-mode  */
-#define CR                  '\r'
-#define LF                  '\n'
-#define LOWER(c)            (unsigned char)(c | 0x20)
-#define IS_ALPHA(c)         (LOWER(c) >= 'a' && LOWER(c) <= 'z')
-#define IS_NUM(c)           ((c) >= '0' && (c) <= '9')
-#define IS_ALPHANUM(c)      (IS_ALPHA(c) || IS_NUM(c))
-#define IS_HEX(c)           (IS_NUM(c) || (LOWER(c) >= 'a' && LOWER(c) <= 'f'))
-#define IS_MARK(c)          ((c) == '-' || (c) == '_' || (c) == '.' || \
-  (c) == '!' || (c) == '~' || (c) == '*' || (c) == '\'' || (c) == '(' || \
-  (c) == ')')
-#define IS_USERINFO_CHAR(c) (IS_ALPHANUM(c) || IS_MARK(c) || (c) == '%' || \
-  (c) == ';' || (c) == ':' || (c) == '&' || (c) == '=' || (c) == '+' || \
-  (c) == '$' || (c) == ',')
-
-#define IS_BASE64(c)        (IS_ALPHANUM(c) || (c) == '-' || (c) == '_' || (c) == '.' || (c) == '+'  || (c) == '/' || (c) == '=' || (c) == '*')
 
 
 size_t mcl_strnlen(const char *src, size_t max)
@@ -62,6 +45,7 @@ int mcl_strcasecmp(const char *s1, const char *s2)
 
 
 
+/******************************** memmem ********************************/
 const void *mcl_memmem_sunday(const void *src, size_t srclen, const void *dst, size_t dstlen)
 {
 	size_t table[256];
@@ -165,6 +149,8 @@ const void *mcl_memrmem_sunday(const void *src, size_t srclen, const void *dst, 
 	return 0;
 }
 
+
+/******************************** HEX±àÂë ********************************/
 size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out)
 {
 	char ch;
@@ -197,7 +183,6 @@ size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out)
 
 	return n;
 }
-
 size_t mcl_hex_encode(const unsigned char *in, size_t len, char *out)
 {
 	static const char hex_table[] = "0123456789abcdef";
@@ -210,4 +195,170 @@ size_t mcl_hex_encode(const unsigned char *in, size_t len, char *out)
 	}
 	*out = '\0';
 	return len * 2;
+}
+
+
+/******************************** BASE64±àÂë ********************************/
+static const char BASE64TABLE[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/===";
+static const char BASE64TABLE_DECODE[256] = {
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -2, -2, -1, -1, -2, -1, -1,/* [\t\n\r] */
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,/* [ ] */
+	52, 53, 54, 55, 56, 57, 58, 59, 60, 61, -1, -1, -1, -1, -1, -1,
+	-1,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14,
+	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, -1, -1, -1, -1, -1,
+	-1, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
+	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
+
+size_t mcl_base64_decode(const char *in, size_t len, unsigned char *out)
+{
+	int k, v;
+	unsigned int x;
+	const unsigned char *in2 = (const unsigned char *)in;
+	const unsigned char *end = (const unsigned char *)in + len;
+	unsigned char *o = out;
+
+	k = 0;
+	x = 0;
+	for (; in2 < end; ++in2) {
+		v = BASE64TABLE_DECODE[*in2];
+		if (v < 0) {
+			if (v == -2)
+				continue;
+			break;
+		}
+		x = (x << 6) | (unsigned int)v;
+		if (++k == 4) {
+			*out++ = (x >> 16) & 0xFF;
+			*out++ = (x >> 8) & 0xFF;
+			*out++ = x & 0xFF;
+			k = 0;
+			x = 0;
+		}
+	}
+	if (k == 3) {
+		*out++ = (x >> 10) & 0xFF;
+		*out++ = (x >> 2) & 0xFF;
+	}
+	else if (k == 2) {
+		*out++ = (x >> 4) & 0xFF;
+	}
+
+	return out - o;
+}
+size_t mcl_base64_encode(const unsigned char *in, size_t len, char *out)
+{
+	size_t count;
+
+	for (count = len / 3; count > 0; --count, out += 4, in += 3) {
+		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+		out[1] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
+		out[2] = BASE64TABLE[((in[1] & 0x0F) << 2) | ((in[2] & 0xC0) >> 6)];
+		out[3] = BASE64TABLE[((in[2] & 0x3F) >> 0)];
+	}
+	switch (len % 3) {
+	case 2:
+		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+		out[1] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
+		out[2] = BASE64TABLE[((in[1] & 0x0F) << 2)];
+		out[3] = BASE64TABLE[64];
+		out[4] = '\0';
+		break;
+	case 1:
+		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+		out[1] = BASE64TABLE[((in[0] & 0x03) << 4)];
+		out[2] = BASE64TABLE[64];
+		out[3] = BASE64TABLE[64];
+		out[4] = '\0';
+		break;
+	default:
+		out[0] = '\0';
+		break;
+	}
+	return (len + 2) / 3 * 4;
+}
+
+
+/******************************** URL±àÂë ********************************/
+size_t mcl_urlencode(const char *in, size_t len, char *out, size_t out_size)
+{
+	size_t i;
+	size_t out_len = 0;
+
+	if (out_size == 0)
+		return 0;
+
+	for (i = 0; i < len && out_len + 1 < out_size; ++i) {
+		if (in[i] == '\0')
+			break;
+
+		if (IS_ALPHANUM(in[i]) || IS_MARK(in[i]))
+			out[out_len++] = in[i];
+		else {
+			if (out_len + 3 >= out_size)
+				break;
+
+			out[out_len++] = '%';
+			out[out_len++] = DEC2HEX(in[i] >> 4);
+			out[out_len++] = DEC2HEX(in[i] & 0x0F);
+		}
+	}
+	out[out_len] = '\0';
+
+	return out_len;
+}
+size_t mcl_urldecode(const char *in, size_t len, char *out, size_t out_size)
+{
+	size_t i;
+	size_t out_len = 0;
+	int value;
+
+	if (out_size == 0)
+		return 0;
+
+	for (i = 0; i < len && out_len + 1 < out_size; ++i) {
+		if (in[i] == '\0')
+			break;
+
+		if (in[i] != '%')
+			out[out_len++] = in[i];
+		else if (IS_HEX(in[i + 1]) && IS_HEX(in[i + 2])) {
+			out[out_len++] = (HEX2DEC(in[i + 1]) << 4) | HEX2DEC(in[i + 2]);
+			i += 2;
+		}
+		else if ((in[i + 1] == 'u' || in[i + 1] == 'U') &&
+			IS_HEX(in[i + 2]) && IS_HEX(in[i + 3]) && IS_HEX(in[i + 4]) && IS_HEX(in[i + 5])) {
+			value = (HEX2DEC(in[i + 2]) << 12) | (HEX2DEC(in[i + 3]) << 8) | (HEX2DEC(in[i + 4]) << 4) | HEX2DEC(in[i + 5]);
+			if (value < 128) {
+				out[out_len++] = value & 0x7F;
+			}
+			else if (value < 0x800) {
+				if (out_len + 2 >= out_size)
+					break;
+
+				out[out_len++] = (0x6 << 5) | ((value >> 6) & 0x1f);
+				out[out_len++] = (1 << 7) | (value & 0x3f);
+			}
+			else {
+				if (out_len + 3 >= out_size)
+					break;
+
+				out[out_len++] = (0xE << 4) | ((value >> 12) & 0xf);
+				out[out_len++] = (1 << 7) | ((value >> 6) & 0x3f);
+				out[out_len++] = (1 << 7) | ((value) & 0x3f);
+			}
+			i += 5;
+		}
+	}
+	out[out_len] = '\0';
+
+	return out_len;
 }
