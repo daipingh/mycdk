@@ -25,18 +25,17 @@
 
 #include "uv.h"
 #include "task.h"
-#include "mcl/loopex.h"
+#include "mcl/worker.h"
 
 #include <time.h>
 
 
-static mcl_loopex_t default_worker_struct;
 static mcl_worker_t *workers = NULL;
 static unsigned int nworkers = 0;
 static unsigned int round_robin_counter = 0;
 
 
-static void fps_setup_workers__on_start(mcl_loopex_req_t *req)
+static void fps_setup_workers__on_start(mcl_work_t *req)
 {
 	uv_sem_post((uv_sem_t *)req->data);
 }
@@ -45,14 +44,11 @@ void fps_setup_workers(uv_loop_t *loop)
 {
 	int cpu_count;
 	unsigned int i;
-	mcl_loopex_req_t req;
+	mcl_work_t req;
 	uv_sem_t sem;
 	uv_cpu_info_t *info;
 
 	if (uv_sem_init(&sem, 0))
-		abort();
-
-	if (mcl_loopex_init(&default_worker_struct, loop))
 		abort();
 
 	uv_cpu_info(&info, &cpu_count);
@@ -61,14 +57,14 @@ void fps_setup_workers(uv_loop_t *loop)
 	workers = (mcl_worker_t *)calloc(sizeof(mcl_worker_t), nworkers);
 
 	for (i = 0; i < nworkers; ++i) {
-		mcl_loopex_t *worker;
+		mcl_worker_t *worker;
 
 		if (mcl_worker_init(&workers[i], loop))
 			abort();
 
-		worker = mcl_worker_get_loopex(&workers[i]);
+		worker = &workers[i];
 		req.data = &sem;
-		if (mcl_loopex_post(worker, &req, fps_setup_workers__on_start))
+		if (mcl_worker_post(worker, &req, fps_setup_workers__on_start))
 			abort();
 
 		uv_sem_wait(&sem);
@@ -76,15 +72,11 @@ void fps_setup_workers(uv_loop_t *loop)
 
 	uv_sem_destroy(&sem);
 }
-mcl_loopex_t *fps_default_worker()
+mcl_worker_t *fps_shared_worker()
 {
-	return &default_worker_struct;
-}
-mcl_loopex_t *fps_shared_worker()
-{
-	mcl_loopex_t *worker;
+	mcl_worker_t *worker;
 
-	worker = &workers[round_robin_counter].loopex;
+	worker = &workers[round_robin_counter];
 	round_robin_counter = (round_robin_counter + 1) % nworkers;
 
 	return worker;
@@ -93,56 +85,71 @@ void fps_cleanup_workers()
 {
 	unsigned int i;
 
-	mcl_loopex_destroy(&default_worker_struct);
 	for (i = 0; i < nworkers; ++i) {
 		mcl_worker_close(&workers[i], NULL);
 	}
 }
 
 
+
 typedef struct {
-	mcl_loopex_req_t req;
+	mcl_work_t req;
 	int count;
 	int max_count;
 	int sum_count;
 	char name[32];
 } test_job;
 
-void do_job(mcl_loopex_req_t *req)
+void do_job(mcl_work_t *req)
 {
-	mcl_loopex_t *wk = req->loopex;
+	mcl_worker_t *wk = req->worker;
 	test_job *job = container_of(req, test_job, req);
 
-	if (job->count % 5 == 0)
-		uv_sleep(1);
+	//if (job->count % 5 == 0)
+	//	uv_sleep(1);
 	job->sum_count += job->count;
 
 	if (job->count < job->max_count) {
 		job->count += 1;
 		wk = fps_shared_worker();
-		mcl_loopex_post(wk, req, do_job);
-	}
-	else {
-		printf("job done %d\n", job->sum_count);
+		mcl_worker_post(wk, req, do_job);
 	}
 }
 
+static void on_async(uv_async_t *async)
+{
+	uv_close((uv_handle_t *)async, NULL);
+}
 
 static uv_loop_t *loop;
 static uint64_t run_test(test_job *job, int count)
 {
 	int r;
 	uint64_t hrtime;
+	mcl_worker_t *worker;
+	uv_async_t async;
+	int s = 0;
 
 	hrtime = uv_hrtime();
 	for (r = 0; r < count; ++r) {
 		job[r].count = 1000 / count * r;
 		job[r].max_count = 1000 / count * (r + 1);
 		job[r].sum_count = 0;
-		mcl_loopex_post(fps_default_worker(), &job[r].req, do_job);
+		worker = fps_shared_worker();
+		mcl_worker_post(worker, &job[r].req, do_job);
 	}
-	mcl_loopex_wait(fps_default_worker(), NULL);
-	r = uv_run(loop, UV_RUN_DEFAULT);
+
+	uv_async_init(loop, &async, on_async);
+	uv_async_send(&async);
+	uv_run(loop, UV_RUN_DEFAULT);
+
+	for (r = 0; r < count; ++r) {
+		if (job[r].count != job[r].max_count) {
+			s += 1;
+			printf("job %d padding, %d/%d\n", r, job[r].count, job[r].max_count);
+		}
+	}
+	ASSERT(s == 0);
 	return uv_hrtime() - hrtime;
 }
 
@@ -160,16 +167,16 @@ TEST_IMPL(hello)
 	fps_setup_workers(loop);
 	srand((unsigned int)time(0));
 
-	for (r = 0; r < ARRAY_SIZE(job); r += 3) {
-		uint64_t hrtime0 = run_test(job, r + 1);
-		uint64_t hrtime1 = run_test(job, r + 1);
-		uint64_t hrtime2 = run_test(job, r + 1);
-		hrtime[r] = (hrtime0 + hrtime1 + hrtime2) / 3;
+	for (r = 1; r <= ARRAY_SIZE(job); r *= 2) {
+		uint64_t hrtime0 = run_test(job, r);
+		uint64_t hrtime1 = run_test(job, r);
+		uint64_t hrtime2 = run_test(job, r);
+		hrtime[r - 1] = (hrtime0 + hrtime1 + hrtime2) / 3;
 	}
-	for (r = 0; r < ARRAY_SIZE(job); r += 3)
-		printf("%llu\n", hrtime[r]);
+	for (r = 1; r <= ARRAY_SIZE(job); r *= 2)
+		printf("%d: %llu\n", r, hrtime[r - 1]);
 	
-	uv_sleep(500);
+	//uv_sleep(500);
 	fps_cleanup_workers();
 	r = uv_run(loop, UV_RUN_DEFAULT);
 	printf("======uv_run: %d\n", r);

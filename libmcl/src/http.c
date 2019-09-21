@@ -487,9 +487,12 @@ static const char *mcl_http_status_string(mcl_http_t *server, unsigned int statu
 static const char *mcl_http_guess_content_type(mcl_http_conn_t *conn, const void *data, size_t length)
 {
 	// TODO: 通过响应内容猜测数据类型.
+	const char *suffix = NULL;
 	const char *path = mcl_http_get_path(conn);
-	const char *suffix = strrchr(path, '.');
 	const char *content_type = "application/octet-stream";
+
+	if (path != NULL)
+		suffix = strrchr(path, '.');
 
 	if (suffix != NULL) {
 		if (!strcmp(suffix, ".htm") || !strcmp(suffix, ".html") || !strcmp(suffix, ".htx"))
@@ -501,6 +504,7 @@ static const char *mcl_http_guess_content_type(mcl_http_conn_t *conn, const void
 		else if (!strcmp(suffix, ".txt"))
 			content_type = "text/plain";
 	}
+
 	return content_type;
 }
 
@@ -651,7 +655,7 @@ int mcl_http_write_bufs(mcl_http_conn_t *conn, mcl_http_write_t *req, const uv_b
 	if (conn->f_closing && !TEST_BIT(conn->resp.field_set, RF_CONNECTION))
 		header_len += sprintf(header_ptr + header_len, "Connection: close\r\n");
 
-	if (bufs != NULL && !TEST_BIT(conn->resp.field_set, RF_CONTENT_TYPE))
+	if (bufs && bufs->base && !TEST_BIT(conn->resp.field_set, RF_CONTENT_TYPE))
 		header_len += sprintf(header_ptr + header_len, "Content-Type: %s\r\n", mcl_http_guess_content_type(conn, bufs->base, bufs->len));
 
 	header_len += sprintf(header_ptr + header_len, "Content-Length: %llu\r\n", (unsigned long long)conn->resp_write_len);

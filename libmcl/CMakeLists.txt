@@ -4,12 +4,8 @@ cmake_minimum_required(VERSION 2.8)
 include(GNUInstallDirs)
 option(MCL_CURL "Enable building mcl with curl support" ON)
 
-link_directories(${CMAKE_INSTALL_PREFIX}/lib)
-include_directories(${CMAKE_INSTALL_PREFIX}/include)
-#list(APPEND CMAKE_MODULE_PATH ${CMAKE_INSTALL_PREFIX}/CMake)
-#list(APPEND CMAKE_MODULE_PATH ${CMAKE_INSTALL_PREFIX}/lib/cmake)
-#list(APPEND CMAKE_MODULE_PATH ${EXTERNAL_INSTALL_DIR})
-#list(APPEND CMAKE_PREFIX_PATH ${EXTERNAL_INSTALL_DIR})
+link_directories(${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
+include_directories(${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
 
 
 set(mcl_shared_libraries
@@ -26,7 +22,7 @@ set(mcl_sources
 	src/applets.c
 	src/filebuf.c
 	src/fstail.c
-	src/loopex.c)
+	src/worker.c)
 
 set(mcl_test_sources
 	test/runner.c
@@ -70,6 +66,7 @@ if(WIN32)
 	list(APPEND mcl_defines _WIN32_WINNT=0x0600 _GNU_SOURCE _CRT_SECURE_NO_WARNINGS)
 	list(APPEND mcl_test_sources test/runner-win.c)
 else()
+	list(APPEND mcl_cflags -fPIC -fvisibility=hidden)
 	list(APPEND mcl_cflags -Wall -Wextra)
 	list(APPEND mcl_cflags -Wno-unused-parameter -Wno-strict-aliasing)
 	list(APPEND mcl_test_sources test/runner-unix.c)
