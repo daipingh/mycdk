@@ -1,2 +1,2 @@
-# mysdk
-my development environment with cmake.
+# mycdk
+my c development environment with cmake.
