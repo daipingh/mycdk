@@ -5,6 +5,7 @@
 #include <string.h>
 
 
+/******************************** string ********************************/
 size_t mcl_strnlen(const char *src, size_t max)
 {
 	const char *end = memchr(src, 0, max);
@@ -43,6 +44,135 @@ int mcl_strcasecmp(const char *s1, const char *s2)
 #endif
 }
 
+
+/******************************** fgets ********************************/
+static size_t mcl__fgets_eof(void *buf, size_t size, size_t count, void *fp)
+{
+	return 0;
+}
+int mcl_sgets_init(mcl_fgets_t *ctx, const char *src, size_t len)
+{
+	ctx->fp = ctx;
+	ctx->fread = mcl__fgets_eof;
+	ctx->buf = (char *)src;
+	ctx->buf_size = len;
+	ctx->buf_len = len;
+	ctx->buf_pos = 0;
+	return 0;
+}
+int mcl_fgets_init(mcl_fgets_t *ctx, void *fp, mcl_fread_cb fread)
+{
+	ctx->fp = fp;
+	ctx->fread = fread;
+	ctx->buf = 0;
+	ctx->buf_size = 0;
+	ctx->buf_len = 0;
+	ctx->buf_pos = 0;
+	return 0;
+}
+int mcl_fgets_setbuf(mcl_fgets_t *ctx, char *buf, size_t buf_size)
+{
+	if (ctx->buf != NULL)
+		return UV_EBUSY;
+
+	ctx->buf = buf;
+	ctx->buf_size = buf_size;
+
+	return 0;
+}
+int mcl_fgets_feof(mcl_fgets_t *ctx)
+{
+	if (ctx->buf == NULL) {
+		ctx->buf = ctx->inline_buf;
+		ctx->buf_size = sizeof(ctx->inline_buf);
+	}
+	if (ctx->buf_pos == ctx->buf_len) {
+		ctx->buf_pos = 0;
+		ctx->buf_len = ctx->fread(ctx->buf, 1, ctx->buf_size, ctx->fp);
+	}
+	return ctx->buf_pos == ctx->buf_len;
+}
+int mcl_fgets_fgetc(mcl_fgets_t *ctx)
+{
+	if (mcl_fgets_feof(ctx))
+		return -1;
+	return ctx->buf[ctx->buf_pos++];
+}
+char *mcl_fgets(mcl_fgets_t *ctx, char *buf, size_t buf_size)
+{
+	size_t len;
+	int ch, complated = 0;
+
+	if (buf_size < 1)
+		return NULL;
+	if (mcl_fgets_feof(ctx))
+		return NULL;
+
+	len = 0;
+	buf_size -= 1;
+
+	while (!complated && len < buf_size) {
+		if (mcl_fgets_feof(ctx))
+			break;
+		ch = mcl_fgets_fgetc(ctx);
+		switch (ch) {
+		case '\0':
+			if (len > 0)
+				complated = 1;
+			break;
+		case '\n':
+			complated = 1;
+		default:
+			buf[len++] = (char)ch;
+			break;
+		}
+	}
+	buf[len] = 0;
+	return buf;
+}
+
+
+/******************************** split_string ********************************/
+int mcl_split_string(char *src, int sep, char **arr, int max)
+{
+	int n = 0;
+
+	if (max < 1)
+		return 0;
+
+	arr[n++] = src;
+	while (n < max) {
+		src = strchr(src, sep);
+		if (src == NULL)
+			break;
+		*src++ = 0;
+		arr[n++] = src;
+	}
+
+	return n;
+}
+int mcl_split_string_seps(char *src, const char *seps, char **arr, int max)
+{
+	int n = 0;
+
+	if (max < 1)
+		return 0;
+
+	arr[n++] = src;
+	while (n < max && *src) {
+
+		while (*src) {
+			if (strchr(seps, *src)) {
+				*src++ = 0;
+				arr[n++] = src;
+				break;
+			}
+			src += 1;
+		}
+	}
+
+	return n;
+}
 
 
 /******************************** memmem ********************************/

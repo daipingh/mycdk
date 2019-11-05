@@ -7,8 +7,6 @@
 
 MCL_BEGIN_EXTERN_C
 
-/**************** filebuf. ****************/
-
 typedef struct mcl_filebuf_s mcl_filebuf_t;
 
 struct mcl_filebuf_s
@@ -45,36 +43,6 @@ MCL_APIDECL size_t mcl_filebuf_fwrite(const void *buf, size_t size, size_t count
 
 MCL_APIDECL void mcl_filebuf_flush(const mcl_filebuf_t *fp);
 
-
-/**************** fgets. ****************/
-
-typedef struct mcl_fgets_s mcl_fgets_t;
-typedef size_t(*mcl_fread_cb)(void *buf, size_t size, size_t count, void *fp);
-
-struct mcl_fgets_s
-{
-	void *fp;
-	mcl_fread_cb fread;
-
-	char *buf;
-	size_t buf_size;
-
-	size_t buf_pos;
-	size_t buf_len;
-
-	char inline_buf[8];
-};
-
-MCL_APIDECL int mcl_fgets_init(mcl_fgets_t *contex, void *fp, mcl_fread_cb fread);
-MCL_APIDECL int mcl_fgets_setbuf(mcl_fgets_t *contex, char *buf, size_t buf_size);
-MCL_APIDECL int mcl_fgets_feof(mcl_fgets_t *contex);
-MCL_APIDECL int mcl_fgets_fgetc(mcl_fgets_t *contex);
-MCL_APIDECL char *mcl_fgets(mcl_fgets_t *contex, char *buf, size_t buf_size);
-
-
-/**************** split_string. ****************/
-MCL_APIDECL int mcl_split_string(char *src, int sep, char **arr, int max);
-MCL_APIDECL int mcl_split_string_seps(char *src, const char *seps, char **arr, int max);
 
 MCL_END_EXTERN_C
 #endif
