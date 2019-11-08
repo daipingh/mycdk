@@ -73,7 +73,7 @@ int mcl_fgets_init(mcl_fgets_t *ctx, void *fp, mcl_fread_cb fread)
 int mcl_fgets_setbuf(mcl_fgets_t *ctx, char *buf, size_t buf_size)
 {
 	if (ctx->buf != NULL)
-		return UV_EBUSY;
+		return -1;
 
 	ctx->buf = buf;
 	ctx->buf_size = buf_size;
@@ -281,14 +281,18 @@ const void *mcl_memrmem_sunday(const void *src, size_t srclen, const void *dst, 
 
 
 /******************************** HEX±àÂë ********************************/
-size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out)
+size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out, size_t out_size)
 {
 	char ch;
 	unsigned char bch;
-	size_t n = 0;
+	size_t i;
+	size_t out_len = 0;
 
-	while (len > 0) {
-		ch = in[0];
+	for (i = 0; i < len && out_len < out_size; ++i) {
+		if (in[i] == ' ' || in[i] == '\t' || in[i] == '\n' || in[i] == '\r')
+			continue;
+
+		ch = in[i];
 		if (IS_NUM(ch))
 			bch = (ch - '0') << 4;
 		else if (IS_HEX(ch))
@@ -296,41 +300,44 @@ size_t mcl_hex_decode(const char *in, size_t len, unsigned char *out)
 		else
 			break;
 
-		ch = in[1];
+		ch = in[i + 1];
 		if (IS_NUM(ch))
 			bch |= ch - '0';
 		else if (IS_HEX(ch))
 			bch |= LOWER(ch) - 'a' + 10;
 		else {
-			out[n++] = bch;
+			out[out_len++] = bch;
 			break;
 		}
 
-		out[n++] = bch;
-		in += 2;
-		len -= 2;
+		i += 1;
+		out[out_len++] = bch;
 	}
 
-	return n;
+	return out_len;
 }
-size_t mcl_hex_encode(const unsigned char *in, size_t len, char *out)
+size_t mcl_hex_encode(const unsigned char *in, size_t len, char *out, size_t out_size)
 {
 	static const char hex_table[] = "0123456789abcdef";
 	size_t i;
+	size_t out_len = 0;
 
-	for (i = 0; i < len; ++i) {
-		out[0] = hex_table[(in[i] & 0xF0) >> 4];
-		out[1] = hex_table[(in[i] & 0x0F)];
-		out += 2;
+	if (out_size == 0)
+		return 0;
+
+	for (i = 0; i < len && out_len + 2 < out_size; ++i) {
+		out[out_len++] = hex_table[in[i] >> 4];
+		out[out_len++] = hex_table[in[i] & 0x0F];
 	}
-	*out = '\0';
-	return len * 2;
+
+	out[out_len] = '\0';
+	return out_len;
 }
 
 
 /******************************** BASE64±àÂë ********************************/
 static const char BASE64TABLE[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/===";
-static const char BASE64TABLE_DECODE[256] = {
+static const int BASE64TABLE_DECODE[256] = {
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -2, -2, -1, -1, -2, -1, -1,/* [\t\n\r] */
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 	-2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 62, -1, -1, -1, 63,/* [ ] */
@@ -348,18 +355,17 @@ static const char BASE64TABLE_DECODE[256] = {
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
 	-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
 
-size_t mcl_base64_decode(const char *in, size_t len, unsigned char *out)
+size_t mcl_base64_decode(const char *in, size_t len, unsigned char *out, size_t out_size)
 {
 	int k, v;
 	unsigned int x;
-	const unsigned char *in2 = (const unsigned char *)in;
-	const unsigned char *end = (const unsigned char *)in + len;
-	unsigned char *o = out;
+	size_t i;
+	size_t out_len = 0;
 
 	k = 0;
 	x = 0;
-	for (; in2 < end; ++in2) {
-		v = BASE64TABLE_DECODE[*in2];
+	for (i = 0; i < len; ++i) {
+		v = BASE64TABLE_DECODE[(unsigned char)in[i]];
 		if (v < 0) {
 			if (v == -2)
 				continue;
@@ -367,53 +373,78 @@ size_t mcl_base64_decode(const char *in, size_t len, unsigned char *out)
 		}
 		x = (x << 6) | (unsigned int)v;
 		if (++k == 4) {
-			*out++ = (x >> 16) & 0xFF;
-			*out++ = (x >> 8) & 0xFF;
-			*out++ = x & 0xFF;
+			if (out_len + 3 > out_size)
+				break;
+			out[out_len++] = (x >> 16) & 0xFF;
+			out[out_len++] = (x >> 8) & 0xFF;
+			out[out_len++] = x & 0xFF;
 			k = 0;
 			x = 0;
 		}
 	}
-	if (k == 3) {
-		*out++ = (x >> 10) & 0xFF;
-		*out++ = (x >> 2) & 0xFF;
-	}
-	else if (k == 2) {
-		*out++ = (x >> 4) & 0xFF;
+
+	if (out_size - out_len > 0) {
+		if (k == 4) {
+			if (out_size - out_len == 1)
+				out[out_len++] = (x >> 16) & 0xFF;
+			else if (out_size - out_len == 2) {
+				out[out_len++] = (x >> 16) & 0xFF;
+				out[out_len++] = (x >> 8) & 0xFF;
+			}
+			else {
+				out[out_len++] = (x >> 16) & 0xFF;
+				out[out_len++] = (x >> 8) & 0xFF;
+				out[out_len++] = x & 0xFF;
+			}
+		}
+		else if (k == 3) {
+			if (out_size - out_len == 1)
+				out[out_len++] = (x >> 10) & 0xFF;
+			else {
+				out[out_len++] = (x >> 10) & 0xFF;
+				out[out_len++] = (x >> 2) & 0xFF;
+			}
+		}
+		else if (k == 2) {
+			*out++ = (x >> 4) & 0xFF;
+		}
 	}
 
-	return out - o;
+	return out_len;
 }
-size_t mcl_base64_encode(const unsigned char *in, size_t len, char *out)
+size_t mcl_base64_encode(const unsigned char *in, size_t len, char *out, size_t out_size)
 {
-	size_t count;
+	size_t i, n;
+	size_t out_len = 0;
 
-	for (count = len / 3; count > 0; --count, out += 4, in += 3) {
-		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
-		out[1] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
-		out[2] = BASE64TABLE[((in[1] & 0x0F) << 2) | ((in[2] & 0xC0) >> 6)];
-		out[3] = BASE64TABLE[((in[2] & 0x3F) >> 0)];
+	if (out_size == 0)
+		return 0;
+
+	n = len / 3;
+	for (i = 0; i < n && out_len + 4 < out_size; ++i, in += 3) {
+		out[out_len++] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+		out[out_len++] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
+		out[out_len++] = BASE64TABLE[((in[1] & 0x0F) << 2) | ((in[2] & 0xC0) >> 6)];
+		out[out_len++] = BASE64TABLE[((in[2] & 0x3F) >> 0)];
 	}
-	switch (len % 3) {
-	case 2:
-		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
-		out[1] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
-		out[2] = BASE64TABLE[((in[1] & 0x0F) << 2)];
-		out[3] = BASE64TABLE[64];
-		out[4] = '\0';
-		break;
-	case 1:
-		out[0] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
-		out[1] = BASE64TABLE[((in[0] & 0x03) << 4)];
-		out[2] = BASE64TABLE[64];
-		out[3] = BASE64TABLE[64];
-		out[4] = '\0';
-		break;
-	default:
-		out[0] = '\0';
-		break;
+	if (out_len + 4 < out_size) {
+		n = len % 3;
+		if (n == 2) {
+			out[out_len++] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+			out[out_len++] = BASE64TABLE[((in[0] & 0x03) << 4) | ((in[1] & 0xF0) >> 4)];
+			out[out_len++] = BASE64TABLE[((in[1] & 0x0F) << 2)];
+			out[out_len++] = BASE64TABLE[64];
+		}
+		else if (n == 1) {
+			out[out_len++] = BASE64TABLE[((in[0] & 0xFC) >> 2)];
+			out[out_len++] = BASE64TABLE[((in[0] & 0x03) << 4)];
+			out[out_len++] = BASE64TABLE[64];
+			out[out_len++] = BASE64TABLE[64];
+		}
 	}
-	return (len + 2) / 3 * 4;
+
+	out[out_len] = '\0';
+	return out_len;
 }
 
 
@@ -441,8 +472,8 @@ size_t mcl_urlencode(const char *in, size_t len, char *out, size_t out_size)
 			out[out_len++] = DEC2HEX(in[i] & 0x0F);
 		}
 	}
-	out[out_len] = '\0';
 
+	out[out_len] = '\0';
 	return out_len;
 }
 size_t mcl_urldecode(const char *in, size_t len, char *out, size_t out_size)
@@ -488,7 +519,7 @@ size_t mcl_urldecode(const char *in, size_t len, char *out, size_t out_size)
 			i += 5;
 		}
 	}
-	out[out_len] = '\0';
 
+	out[out_len] = '\0';
 	return out_len;
 }
