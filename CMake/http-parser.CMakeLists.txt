@@ -1,0 +1,61 @@
+cmake_minimum_required(VERSION 3.0)
+project(http-parser C)
+
+option(HTTPPARSER_BUILD_TESTS "builds http-parser tests and benchmarks if set to ON" OFF)
+
+set(hp_sources
+    http_parser.h
+    http_parser.c)
+
+
+if(WIN32)
+    list(APPEND hp_defines _WIN32_WINNT=0x0600 _CRT_SECURE_NO_WARNINGS=1)
+    list(APPEND hp_cflags /W3)
+else()
+    list(APPEND hp_static_cflags -fPIC -fvisibility=hidden)
+    list(APPEND hp_cflags --std=gnu89)
+    list(APPEND hp_cflags -Wall -Wextra -Wstrict-prototypes)
+    list(APPEND hp_cflags -Wno-unused-parameter)
+endif()
+
+add_library(http_parser SHARED ${hp_sources})
+target_compile_definitions(http_parser PRIVATE ${hp_defines})
+target_compile_options(http_parser PRIVATE ${hp_cflags})
+
+add_library(http_parser_a STATIC ${hp_sources})
+target_compile_definitions(http_parser_a PRIVATE ${hp_defines})
+target_compile_options(http_parser_a PRIVATE ${hp_cflags} ${hp_static_cflags})
+
+
+# Testing
+if(HTTPPARSER_BUILD_TESTS)
+    add_executable(test ${hp_sources} test.c)
+    target_compile_definitions(test PRIVATE ${hp_defines})
+    target_compile_options(test PRIVATE ${hp_cflags})
+
+    add_executable(bench ${hp_sources} bench.c)
+    target_compile_definitions(bench PRIVATE ${hp_defines})
+    target_compile_options(bench PRIVATE ${hp_cflags})
+
+    add_executable(url_parser ${hp_sources} contrib/url_parser.c)
+    target_compile_definitions(url_parser PRIVATE ${hp_defines})
+    target_compile_options(url_parser PRIVATE ${hp_cflags})
+
+    add_executable(parsertrace ${hp_sources} contrib/parsertrace.c)
+    target_compile_definitions(parsertrace PRIVATE ${hp_defines})
+    target_compile_options(parsertrace PRIVATE ${hp_cflags})
+endif()
+
+
+# Install
+include(GNUInstallDirs)
+if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL)
+    install(TARGETS http_parser http_parser_a EXPORT ${PROJECT_NAME}
+            INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
+if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL)
+    install(FILES http_parser.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+endif()

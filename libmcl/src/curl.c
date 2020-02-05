@@ -51,7 +51,7 @@ static void check_multi_info(mcl_curlm_t *curlm)
 	CURL *handle;
 	mcl_curl_t *curl;
 
-	while ((message = curl_multi_info_read(curlm->handle, &pending))) {
+	while ((message = curl_multi_info_read(curlm->handle, &pending)) != NULL) {
 		switch (message->msg) {
 		case CURLMSG_DONE:
 			/* Do not use message data after calling curl_multi_remove_handle() and

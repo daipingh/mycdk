@@ -1,0 +1,10 @@
+
+if(NOT EXISTS "__external_update.txt")
+	message(STATUS "Update directory ${CMAKE_CURRENT_SOURCE_DIR}")
+	file(GLOB_RECURSE UPDATE_LIST LIST_DIRECTORIES true RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *)
+	execute_process(COMMAND ${CMAKE_COMMAND} -E touch_nocreate ${CMAKE_CURRENT_SOURCE_DIR})
+	foreach(UPDATE_FILE ${UPDATE_LIST})
+		execute_process(COMMAND ${CMAKE_COMMAND} -E touch_nocreate ${CMAKE_CURRENT_SOURCE_DIR}/${UPDATE_FILE})
+	endforeach()
+	file(WRITE "__external_update.txt" "${UPDATE_LIST}")
+endif()

@@ -1,0 +1,44 @@
+cmake_minimum_required(VERSION 2.8)
+project(llhttp C)
+
+set(hp_sources
+    include/llhttp.h
+    src/llhttp.c
+    src/api.c
+    src/http.c)
+
+list(APPEND hp_includes include)
+
+if(WIN32)
+    list(APPEND hp_defines _WIN32_WINNT=0x0600 _CRT_SECURE_NO_WARNINGS=1)
+    list(APPEND hp_cflags /W3)
+else()
+    list(APPEND hp_static_cflags -fPIC -fvisibility=hidden)
+    list(APPEND hp_cflags --std=gnu89)
+    list(APPEND hp_cflags -Wall -Wextra -Wstrict-prototypes)
+    list(APPEND hp_cflags -Wno-unused-parameter)
+endif()
+
+add_library(llhttp SHARED ${hp_sources})
+target_compile_definitions(llhttp PRIVATE ${hp_defines})
+target_compile_options(llhttp PRIVATE ${hp_cflags})
+target_include_directories(llhttp PRIVATE ${hp_includes})
+
+add_library(llhttp_a STATIC ${hp_sources})
+target_compile_definitions(llhttp_a PRIVATE ${hp_defines})
+target_compile_options(llhttp_a PRIVATE ${hp_cflags} ${hp_static_cflags})
+target_include_directories(llhttp_a PRIVATE ${hp_includes})
+
+
+# Install
+include(GNUInstallDirs)
+if(NOT SKIP_INSTALL_LIBRARIES AND NOT SKIP_INSTALL_ALL)
+    install(TARGETS llhttp llhttp_a EXPORT ${PROJECT_NAME}
+            INCLUDES DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+            RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+endif()
+if(NOT SKIP_INSTALL_HEADERS AND NOT SKIP_INSTALL_ALL)
+    install(FILES include/llhttp.h DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}")
+endif()

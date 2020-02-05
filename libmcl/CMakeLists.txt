@@ -9,15 +9,20 @@ include_directories(${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
 
 
 set(mcl_shared_libraries
+	llhttp_a
 	http_parser_a
 	uv)
 
 set(mcl_static_libraries
+	llhttp_a
 	http_parser_a
 	uv_a)
 
 set(mcl_sources
 	src/http.c
+	src/urlparser.c
+	src/stream.c
+	src/server.c
 	src/utils.c
 	src/applets.c
 	src/filebuf.c

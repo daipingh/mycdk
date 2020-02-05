@@ -8,82 +8,70 @@
 
 MCL_BEGIN_EXTERN_C
 
-#define MCL_STREAM_WRITE_T_SIZE                   256
 
 typedef struct mcl_stream_s mcl_stream_t;
-typedef struct mcl_stream_vtbl_s mcl_stream_vtbl_t;
-typedef struct mcl_stream_write_s mcl_stream_write_t;
 
-typedef void(*mcl_stream_close_cb)(mcl_stream_t *handle);
-typedef void(*mcl_stream_alloc_cb)(mcl_stream_t *handle, size_t suggested_size, uv_buf_t *buf);
-typedef void(*mcl_stream_read_cb)(mcl_stream_t *handle, ssize_t nread, const uv_buf_t *buf);
-typedef void(*mcl_stream_write_cb)(mcl_stream_write_t *req, int status);
+typedef void(*mcl_stream_close_cb)(mcl_stream_t *strm);
+typedef void(*mcl_stream_alloc_cb)(mcl_stream_t *strm, size_t suggested_size, uv_buf_t *buf);
+typedef void(*mcl_stream_read_cb)(mcl_stream_t *strm, ssize_t nread, const uv_buf_t *buf);
+typedef void(*mcl_stream_write_cb)(void *arg, int status);
 
-typedef void(*mcl_stream_close_fn)(mcl_stream_t *handle, mcl_stream_close_cb close_cb);
-typedef int(*mcl_stream_read_start_fn)(mcl_stream_t *handle, mcl_stream_alloc_cb alloc_cb, mcl_stream_read_cb read_cb);
-typedef int(*mcl_stream_read_stop_fn)(mcl_stream_t *handle);
-typedef int(*mcl_stream_write_fn)(mcl_stream_t *handle, mcl_stream_write_t *req, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb);
+typedef void(*mcl_stream_close_fn)(mcl_stream_t *strm, mcl_stream_close_cb close_cb);
+typedef int(*mcl_stream_read_start_fn)(mcl_stream_t *strm, mcl_stream_alloc_cb alloc_cb, mcl_stream_read_cb read_cb);
+typedef int(*mcl_stream_read_stop_fn)(mcl_stream_t *strm);
+typedef int(*mcl_stream_write_fn)(mcl_stream_t *strm, void *arg, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb);
+typedef int(*mcl_stream_crack_fn)(mcl_stream_t *strm);
+typedef int(*mcl_stream_get_prop_fn)(mcl_stream_t *strm, int name, void *val, int *len);
+typedef int(*mcl_stream_set_prop_fn)(mcl_stream_t *strm, int name, const void *val, int len);
 
-
-struct mcl_stream_vtbl_s
-{
-	mcl_stream_close_fn close;
-	mcl_stream_write_fn write;
-	mcl_stream_read_start_fn read_start;
-	mcl_stream_read_stop_fn read_stop;
-};
 
 struct mcl_stream_s
 {
-	const mcl_stream_vtbl_t *vtbl;
+	struct {
+		mcl_stream_close_fn close;
+		mcl_stream_read_start_fn read_start;
+		mcl_stream_read_stop_fn read_stop;
+		mcl_stream_write_fn write;
+		mcl_stream_crack_fn crack;
+		mcl_stream_get_prop_fn get_prop;
+		mcl_stream_set_prop_fn set_prop;
+	} vtbl;
 	void *data;
-	void *extension_data;
 };
 
-typedef struct {
-	mcl_stream_t *handle;
-	mcl_stream_write_cb write_cb;
-	void *data;
-} mcl__stream_write_t;
-
-struct mcl_stream_write_s
+enum MCL_STREAM_PROP
 {
-	mcl_stream_t *handle;
-	mcl_stream_write_cb write_cb;
-	void *data;
-	union {
-		char extension_data[MCL_STREAM_WRITE_T_SIZE - sizeof(mcl__stream_write_t)];
-	};
+	MCL_STREAM_PROP_TIMEOUT,
+	MCL_STREAM_PROP_TCPNODELAY,
+	MCL_STREAM_PROP_PEERNAME,
+	MCL_STREAM_PROP_SOCKNAME,
+	MCL_STREAM_PROP_MAX
 };
 
-static __inline void mcl_stream_close(mcl_stream_t *handle, mcl_stream_close_cb close_cb)
-{
-	handle->vtbl->close(handle, close_cb);
-}
-static __inline int mcl_stream_read_start(mcl_stream_t *handle, mcl_stream_alloc_cb alloc_cb, mcl_stream_read_cb read_cb)
-{
-	return handle->vtbl->read_start(handle, alloc_cb, read_cb);
-}
-static __inline int mcl_stream_read_stop(mcl_stream_t *handle)
-{
-	return handle->vtbl->read_stop(handle);
-}
-static __inline int mcl_stream_write(mcl_stream_t *handle, mcl_stream_write_t *req, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb)
-{
-	return handle->vtbl->write(handle, req, bufs, nbufs, write_cb);
-}
+#define mcl_stream_close(strm, close_cb) \
+	(strm)->vtbl.close((strm), (close_cb))
+
+#define mcl_stream_read_start(strm, alloc_cb, read_cb) \
+	((strm)->vtbl.read_start ? (strm)->vtbl.read_start((strm), (alloc_cb), (read_cb)) : -1)
+
+#define mcl_stream_read_stop(strm) \
+	((strm)->vtbl.read_stop ? (strm)->vtbl.read_stop((strm)) : -1)
+
+#define mcl_stream_write(strm, arg, bufs, nbufs, write_cb) \
+	((strm)->vtbl.write ? (strm)->vtbl.write((strm), (arg), (bufs), (nbufs), (write_cb)) : -1)
+
+#define mcl_stream_crack(strm) \
+	((strm)->vtbl.crack ? (strm)->vtbl.crack((strm)) : -1)
+
+#define mcl_stream_get_prop(strm, name, val, len) \
+	((strm)->vtbl.get_prop ? (strm)->vtbl.get_prop((strm), (name), (val), (len)) : -1)
+
+#define mcl_stream_set_prop(strm, name, val, len) \
+	((strm)->vtbl.set_prop ? (strm)->vtbl.set_prop((strm), (name), (val), (len)) : -1)
 
 
-typedef struct {
-	mcl_stream_t *handle;
-	mcl_stream_write_cb write_cb;
-	void *data;
-	union {
-		uv_write_t uvwrite;
-		char extension_data[MCL_STREAM_WRITE_T_SIZE - sizeof(mcl__stream_write_t)];
-	};
-} mcl_stream_uvwrite_t;
-STATIC_ASSERT(sizeof(mcl_stream_uvwrite_t) == MCL_STREAM_WRITE_T_SIZE);
+MCL_APIDECL mcl_stream_t *mcl_uvstream_wrap(uv_loop_t *loop, uv_stream_t *client, int *result);
+MCL_APIDECL mcl_stream_t *mcl_uvstream_accept(uv_loop_t *loop, uv_stream_t *server, int *result, uv_stream_t **client);
 
 
 MCL_END_EXTERN_C
