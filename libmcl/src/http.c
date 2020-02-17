@@ -2,7 +2,6 @@
 #include "http.h"
 #include "defs.h"
 #include "queue.h"
-#include "stream.h"
 #include "utils.h"
 
 #include <llhttp.h>
@@ -638,13 +637,13 @@ int mcl_http_set_header(mcl_http_conn_t *conn, const char *name, const char *val
 	if (conn->hs->strict_mode) {
 		// ·Ç·¨×Ö·û¼ì²é.
 		for (i = 0; name[i]; ++i) {
-			if (name[i] == CR || name[i] == LF || name[i] == ':' || name[i] == ' ') {
+			if (name[i] == '\r' || name[i] == '\n' || name[i] == ':' || name[i] == ' ') {
 				UNREACHABLE_ASSERT();
 				return UV_EINVAL;
 			}
 		}
 		for (i = 0; value[i]; ++i) {
-			if (value[i] == CR || value[i] == LF) {
+			if (value[i] == '\r' || value[i] == '\n') {
 				UNREACHABLE_ASSERT();
 				return UV_EINVAL;
 			}

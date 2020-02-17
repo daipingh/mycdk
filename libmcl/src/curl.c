@@ -1,8 +1,8 @@
 
 #include "curl.h"
 #include "defs.h"
-#include <stdlib.h>
 #include "queue.h"
+#include <stdlib.h>
 
 
 typedef struct {

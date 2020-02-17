@@ -2,8 +2,8 @@
 #ifndef MCL_HTTP_H_
 #define MCL_HTTP_H_
 
+#include <uv.h>
 #include "stream.h"
-#include <uv/tree.h>
 
 
 MCL_BEGIN_EXTERN_C

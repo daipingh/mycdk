@@ -1,30 +1,9 @@
 
-#include "queue.h"
 #include "server.h"
+#include "defs.h"
+#include "queue.h"
 #include <memory.h>
 
-
-/* ASSERT() is for debug checks, CHECK() for run-time sanity checks.
- * DEBUG_CHECKS is for expensive debug checks that we only want to
- * enable in debug builds but still want type-checked by the compiler
- * in release builds.
- */
-#if defined(NDEBUG)
-# define ASSERT(exp)
-# define CHECK(exp)    do { if (!(exp)) abort(); } while (0)
-# define DEBUG_CHECKS  (0)
-#else
-# define ASSERT(exp)   assert(exp)
-# define CHECK(exp)    assert(exp)
-# define DEBUG_CHECKS  (1)
-#endif
-
-#define UNREACHABLE() CHECK(!"Unreachable code reached.")
-#define UNREACHABLE_ASSERT() ASSERT(!"Unreachable code reached.")
-
-
-
-/****************************************************************/
 
 #define UVSTREAM_TYPE_TCP        0x01
 #define UVSTREAM_TYPE_PIPE       0x02

@@ -1,13 +1,12 @@
 
-#ifndef WYS_HTTPSRV_H_
-#define WYS_HTTPSRV_H_
+#ifndef MCL_SERVER_H_
+#define MCL_SERVER_H_
 
 #include <uv.h>
-#include <mcl/http.h>
+#include "stream.h"
 
 
 MCL_BEGIN_EXTERN_C
-
 
 typedef struct mcl_server_s mcl_server_t;
 typedef void(*mcl_connection_cb)(void *arg, mcl_stream_t *connection);

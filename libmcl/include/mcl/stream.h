@@ -45,6 +45,7 @@ enum MCL_STREAM_PROP
 	MCL_STREAM_PROP_TCPNODELAY,
 	MCL_STREAM_PROP_PEERNAME,
 	MCL_STREAM_PROP_SOCKNAME,
+	MCL_STREAM_PROP_QUEUEWORK,
 	MCL_STREAM_PROP_MAX
 };
 
@@ -72,6 +73,7 @@ enum MCL_STREAM_PROP
 
 MCL_APIDECL mcl_stream_t *mcl_uvstream_wrap(uv_loop_t *loop, uv_stream_t *client, int *result);
 MCL_APIDECL mcl_stream_t *mcl_uvstream_accept(uv_loop_t *loop, uv_stream_t *server, int *result, uv_stream_t **client);
+MCL_APIDECL mcl_stream_t *mcl_sslstream_wrap(uv_loop_t *loop, mcl_stream_t *stream, int is_server, void *ssl_ctx, int *result, void **ssl);
 
 
 MCL_END_EXTERN_C
