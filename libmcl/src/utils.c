@@ -5,6 +5,41 @@
 #include <string.h>
 
 
+/******************************** (private) ********************************/
+
+struct mcl__memlist
+{
+	struct mcl__memlist *n;
+};
+
+void *mcl__memlist_get(void **memlist, size_t size)
+{
+	void *mem;
+	struct mcl__memlist **_memlist = (struct mcl__memlist **)memlist;
+
+	if (!_memlist || !*_memlist)
+		mem = malloc(size);
+	else {
+		mem = *_memlist;
+		*_memlist = (*_memlist)->n;
+	}
+
+	return mem;
+}
+void mcl__memlist_release(void **memlist, void *mem)
+{
+	struct mcl__memlist *_mem = (struct mcl__memlist *)mem;
+	struct mcl__memlist **_memlist = (struct mcl__memlist **)memlist;
+
+	if (!_memlist)
+		free(mem);
+	else {
+		_mem->n = *_memlist;
+		*_memlist = _mem;
+	}
+}
+
+
 /******************************** string ********************************/
 size_t mcl_strnlen(const char *src, size_t max)
 {

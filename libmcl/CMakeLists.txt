@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 2.8)
 
 include(GNUInstallDirs)
 option(MCL_CURL "Enable building mcl with curl support" ON)
+option(MCL_OPENSSL "Enable building mcl with openssl support" ON)
 
 link_directories(${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 include_directories(${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
@@ -37,10 +38,19 @@ set(mcl_test_sources
 	test/test-pass-always.c
 	test/test-platform-output.c)
 
+if(MCL_OPENSSL)
+	find_package(OpenSSL REQUIRED)
+	message(STATUS "Using OpenSSL ${OPENSSL_VERSION}")
+	list(APPEND mcl_shared_libraries ${OPENSSL_LIBRARIES})
+	list(APPEND mcl_static_libraries ${OPENSSL_LIBRARIES})
+	include_directories(${OPENSSL_INCLUDE_DIR})
+endif()
+
 if(MCL_CURL)
 	find_package(CURL COMPONENTS libcurl CONFIG)
 	if(NOT CURL_FOUND)
 		find_package(CURL REQUIRED)
+		message(STATUS "Using CURL ${CURL_VERSION_STRING}")
 	endif()
 
 	if(WIN32)

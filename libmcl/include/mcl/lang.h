@@ -55,6 +55,11 @@
 #define MCL__MIN_HELPER(__fn, ...) MCL_MACRO_EXPAND(__fn(__VA_ARGS__))
 
 
+/* rol/ror. */
+#define MCL_ROL(v, n) (((v) << (n)) | ((v) >> (sizeof(v) * 8 - (n))))
+#define MCL_ROR(v, n) (((v) >> (n)) | ((v) << (sizeof(v) * 8 - (n))))
+
+
 /* ARRAY_SIZE. */
 #ifndef ARRAY_SIZE
 #ifdef __cplusplus

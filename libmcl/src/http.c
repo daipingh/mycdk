@@ -10,12 +10,15 @@
 #include <string.h>
 
 
-#define MCL_HTTP__HEADER_BUF_MIN_SIZE ( 4 * 1024)
-#define MCL_HTTP__HEADER_BUF_DEF_SIZE (32 * 1024)
-
 #define TEST_BIT(s, n)  ((s) & (1 << (n)))
 #define SET_BIT(s, n)   ((s) |= (1 << (n)))
 #define CLEAR_BIT(s, n) ((s) &= ~(1 << (n)))
+
+#define MCL_HTTP__HEADER_BUF_MIN_SIZE ( 4 * 1024)
+#define MCL_HTTP__HEADER_BUF_DEF_SIZE (32 * 1024)
+
+#define MCL_HTTP__STATUS_BUF_SIZE     ( 1 * 256)
+#define MCL_HTTP__RESP_BUF_SIZE       ( 4 * 1024)
 
 #ifndef HTTP_STATUS_MAP
 /* Status Codes */
@@ -85,10 +88,10 @@
 typedef struct mcl_http_write_s mcl_http_write_t;
 typedef struct mcl_http_field_s mcl_http_field_t;
 
-struct mcl_http_s
+struct mcl_http_conf_s
 {
 	int closing;
-	unsigned int strict_mode;
+	int strict;
 	unsigned int header_buf_size;
 	unsigned int ref_count;
 };
@@ -97,16 +100,34 @@ struct mcl_http_write_s
 {
 	char chunk_header[16];
 	void *arg;
-	mcl_http_write_cb write_cb;
+	mcl_http_send_cb write_cb;
 	mcl_http_conn_t *conn;
 };
 
 struct mcl_http_field_s
 {
-	const char *key;
-	const char *val;
-	mcl_http_field_t *next;
+	QUEUE queue;
+	RB_ENTRY(mcl_http_field_s) rb_entry;
+	unsigned int name_hash;
+	unsigned int name_len;
+	const char *name;
+	const char *value;
 };
+
+static int mcl_http_field_compare(mcl_http_field_t *a, mcl_http_field_t *b)
+{
+	if (a->name_hash < b->name_hash)
+		return -1;
+	if (a->name_hash > b->name_hash)
+		return 1;
+	if (a->name_len < b->name_len)
+		return -1;
+	if (a->name_len > b->name_len)
+		return 1;
+	return memcmp(a->name, b->name, a->name_len);
+}
+RB_HEAD(mcl_http_field_tree_s, mcl_http_field_s);
+RB_GENERATE_STATIC(mcl_http_field_tree_s, mcl_http_field_s, rb_entry, mcl_http_field_compare)
 
 
 #define RF_MAP(XX)                                    \
@@ -120,7 +141,7 @@ enum
 #define XX(_n, _s) _n,
 	RF_MAP(XX)
 #undef XX
-	RF_MAX = 7
+	RF_MAX
 };
 
 static struct
@@ -138,32 +159,45 @@ rf_map_info[RF_MAX] =
 
 struct mcl_http_conn_s
 {
-	mcl_http_t *hs;
 	mcl_stream_t *stream;
+	mcl_http_conf_t *conf;
 
 	llhttp_t parser;
 	mcl_urlparser_t urlparser;
 
 	unsigned short f_closing;
+	unsigned short f_query_parsed;
 	unsigned short f_req_begin;
 	unsigned short f_req_complete;
-	unsigned short f_cgi_complete;
 	unsigned short f_resp_begin;
 	unsigned short f_resp_complete;
-	unsigned short f_internal_error;
 	unsigned int error_code;
-	unsigned int ref_count;
 
-	char *data_buf;
-	uint32_t data_buf_size;
-	uint32_t data_received;
-	uint32_t data_parsed;
-	uint32_t header_size;
+	void *fieldbufs;
+	mcl_http_field_t fieldbufs2[24];
+
+	char *recv_buf;
+	char *resp_buf;
+	char *query_buf;
+
+	uint32_t recv_buf_size;
+	uint32_t resp_buf_size;
+	uint32_t query_buf_size;
+	uint32_t ref_count;
 
 	char *current_buf;
-	uint32_t current_len;
 	char *url;
+
+	uint32_t data_received;
+	uint32_t data_parsed;
+	uint32_t current_len;
+	uint32_t header_size;
+
 	mcl_http_field_t *field_first;
+	QUEUE field_queue;
+	QUEUE query_queue;
+	struct mcl_http_field_tree_s field_tree;
+	struct mcl_http_field_tree_s query_tree;
 
 	// 请求回调.
 	mcl_http_connection_cb connection_cb;
@@ -171,7 +205,7 @@ struct mcl_http_conn_s
 	mcl_http_data_cb req_data_cb;
 	void *req_data_arg;
 
-	// 特殊字段特殊处理，其他字段直接添加到缓冲区，不做重复检查.
+	// 响应信息.
 	struct {
 		unsigned int status_code;
 		unsigned short http_major;
@@ -183,13 +217,6 @@ struct mcl_http_conn_s
 		uint32_t field_set;
 		uint32_t fields_len;
 	} resp;
-
-	char *resp_status_buf;
-	uint32_t resp_status_buf_size;
-	char *resp_fields_buf;
-	uint32_t resp_fields_buf_size;
-
-	mcl_http_field_t *field_pool;
 };
 
 
@@ -197,41 +224,32 @@ static void mcl_http__on_alloc(mcl_stream_t *stream, size_t suggested_size, uv_b
 static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_t *buf);
 
 
-static void mcl_http__ref(mcl_http_t *hs)
+static unsigned int mcl_http__hash(const void *raw, size_t length)
 {
-	hs->ref_count += 1;
+	size_t i;
+	unsigned int hash = 0;
+	const unsigned char *p = (const unsigned char *)raw;
+
+	for (i = 0; i < length; ++i) {
+		hash = MCL_ROR(hash, 1) ^ p[i];
+	}
+
+	return hash;
 }
-static void mcl_http__unref(mcl_http_t *hs)
+
+static void mcl_http_conf__ref(mcl_http_conf_t *conf)
 {
-	hs->ref_count -= 1;
-	if (hs->ref_count == 0) {
-		CHECK(hs->closing);
-		free(hs);
+	conf->ref_count += 1;
+}
+static void mcl_http_conf__unref(mcl_http_conf_t *conf)
+{
+	conf->ref_count -= 1;
+	if (conf->ref_count == 0) {
+		CHECK(conf->closing);
+		free(conf);
 	}
 }
 
-
-static mcl_http_field_t *mcl_http_field_new(mcl_http_conn_t *conn)
-{
-	mcl_http_field_t *field;
-
-	if (conn->field_pool == NULL)
-		field = (mcl_http_field_t *)malloc(sizeof(mcl_http_field_t));
-	else {
-		field = conn->field_pool;
-		conn->field_pool = conn->field_pool->next;
-	}
-	field->key = NULL;
-	field->val = NULL;
-	field->next = NULL;
-
-	return field;
-}
-static void mcl_http_field_delete(mcl_http_conn_t *conn, mcl_http_field_t *field)
-{
-	field->next = conn->field_pool;
-	conn->field_pool = field;
-}
 
 static void mcl_http_connection_close(mcl_http_conn_t *conn)
 {
@@ -239,7 +257,7 @@ static void mcl_http_connection_close(mcl_http_conn_t *conn)
 }
 static mcl_http_conn_t *mcl_http_conn_from_parser(llhttp_t *parser)
 {
-	return (mcl_http_conn_t *)parser->data;
+	return container_of(parser, mcl_http_conn_t, parser);
 }
 
 static int on_message_begin(llhttp_t *parser)
@@ -278,12 +296,6 @@ static int on_url_complete(mcl_http_conn_t *conn)
 	ptr = (char *)mcl_url_get_path(&conn->urlparser, &res);
 	if (res >= 0)
 		ptr[res] = 0;
-	else {
-		mcl_http_connection_close(conn);
-		mcl_http_set_status(conn, 400);
-		mcl_http_write_data(conn, NULL, NULL, 0, NULL);
-		return -1;
-	}
 
 	// url-query.
 	ptr = (char *)mcl_url_get_query(&conn->urlparser, &res);
@@ -297,52 +309,41 @@ static int on_url_complete(mcl_http_conn_t *conn)
 
 	return 0;
 }
-static int on_status(llhttp_t *parser, const char *at, size_t length)
-{
-	UNREACHABLE();
-	printf("%s: %.*s\n", __FUNCTION__, (int)length, at);
-	return 0;
-}
 static int on_header_field(llhttp_t *parser, const char *at, size_t length)
 {
-	mcl_http_field_t *field;
 	mcl_http_conn_t *conn = mcl_http_conn_from_parser(parser);
 
 	ASSERT(conn->url != NULL);
 
-	if (conn->field_first == NULL) {
-		ASSERT(conn->current_buf == conn->url);
-		conn->current_buf[conn->current_len] = 0;
-		if (on_url_complete(conn))
+	if (conn->field_first == NULL || conn->field_first->value != NULL) {
+		if (conn->field_first == NULL) {
+			ASSERT(conn->current_buf == conn->url);
+			conn->current_buf[conn->current_len] = 0;
+			on_url_complete(conn);
+		}
+		else if (conn->field_first->value != NULL) {
+			ASSERT(conn->field_first->name != NULL);
+			ASSERT(conn->current_buf == conn->field_first->value);
+			conn->current_buf[conn->current_len] = 0;
+			conn->field_first->name_len = (unsigned int)strlen(conn->field_first->name);
+			conn->field_first->name_hash = mcl_http__hash(conn->field_first->name, conn->field_first->name_len);
+			QUEUE_INSERT_TAIL(&conn->field_queue, &conn->field_first->queue);
+			RB_INSERT(mcl_http_field_tree_s, &conn->field_tree, conn->field_first);
+		}
+		// empty.
+		if (length == 0)
+			conn->current_buf += conn->current_len;
+		else
+			conn->current_buf = (char *)at;
+		conn->current_len = (uint32_t)length;
+		conn->field_first = (mcl_http_field_t *)mcl__memlist_get(&conn->fieldbufs, sizeof(mcl_http_field_t));
+		if (conn->field_first == NULL)
 			return -1;
-
-		// empty.
-		if (length == 0)
-			conn->current_buf += conn->current_len;
-		else
-			conn->current_buf = (char *)at;
-		conn->current_len = (uint32_t)length;
-		conn->field_first = mcl_http_field_new(conn);
-		conn->field_first->key = conn->current_buf;
-	}
-	else if (conn->field_first->val != NULL) {
-		ASSERT(conn->field_first->key != NULL);
-		ASSERT(conn->current_buf == conn->field_first->val);
-		conn->current_buf[conn->current_len] = 0;
-
-		// empty.
-		if (length == 0)
-			conn->current_buf += conn->current_len;
-		else
-			conn->current_buf = (char *)at;
-		conn->current_len = (uint32_t)length;
-		field = mcl_http_field_new(conn);
-		field->next = conn->field_first;
-		conn->field_first = field;
-		conn->field_first->key = conn->current_buf;
+		conn->field_first->name = conn->current_buf;
+		conn->field_first->value = NULL;
 	}
 	else {
-		CHECK(conn->current_buf == conn->field_first->key);
+		CHECK(conn->current_buf == conn->field_first->name);
 		CHECK(conn->current_buf + conn->current_len == at);
 		conn->current_len += (uint32_t)length;
 	}
@@ -355,10 +356,10 @@ static int on_header_value(llhttp_t *parser, const char *at, size_t length)
 
 	ASSERT(conn->url != NULL);
 	ASSERT(conn->field_first != NULL);
-	ASSERT(conn->field_first->key != NULL);
+	ASSERT(conn->field_first->name != NULL);
 
-	if (conn->field_first->val == NULL) {
-		ASSERT(conn->current_buf == conn->field_first->key);
+	if (conn->field_first->value == NULL) {
+		ASSERT(conn->current_buf == conn->field_first->name);
 		conn->current_buf[conn->current_len] = 0;
 
 		// empty.
@@ -367,10 +368,10 @@ static int on_header_value(llhttp_t *parser, const char *at, size_t length)
 		else
 			conn->current_buf = (char *)at;
 		conn->current_len = (uint32_t)length;
-		conn->field_first->val = conn->current_buf;
+		conn->field_first->value = conn->current_buf;
 	}
 	else {
-		CHECK(conn->current_buf == conn->field_first->val);
+		CHECK(conn->current_buf == conn->field_first->value);
 		CHECK(conn->current_buf + conn->current_len == at);
 		conn->current_len += (uint32_t)length;
 	}
@@ -386,25 +387,26 @@ static int on_headers_complete(llhttp_t *parser)
 	if (conn->field_first == NULL) {
 		ASSERT(conn->current_buf == conn->url);
 		conn->current_buf[conn->current_len] = 0;
-		if (on_url_complete(conn))
-			return -1;
+		on_url_complete(conn);
 
 		conn->current_buf = NULL;
 		conn->current_len = 0;
 	}
 	else {
-		ASSERT(conn->field_first->key != NULL);
-		ASSERT(conn->current_buf == conn->field_first->val);
+		ASSERT(conn->field_first->name != NULL);
+		ASSERT(conn->current_buf == conn->field_first->value);
 		conn->current_buf[conn->current_len] = 0;
+		conn->field_first->name_len = (unsigned int)strlen(conn->field_first->name);
+		conn->field_first->name_hash = mcl_http__hash(conn->field_first->name, conn->field_first->name_len);
+		QUEUE_INSERT_TAIL(&conn->field_queue, &conn->field_first->queue);
+		RB_INSERT(mcl_http_field_tree_s, &conn->field_tree, conn->field_first);
 
+		conn->field_first = NULL;
 		conn->current_buf = NULL;
 		conn->current_len = 0;
 	}
 
-	if (!conn->f_cgi_complete) {
-		conn->connection_cb(conn->connection_arg, conn);
-		conn->f_cgi_complete = 1;
-	}
+	conn->connection_cb(conn->connection_arg, conn);
 	return 0;
 }
 static int on_body(llhttp_t *parser, const char *at, size_t length)
@@ -412,7 +414,7 @@ static int on_body(llhttp_t *parser, const char *at, size_t length)
 	mcl_http_conn_t *conn = mcl_http_conn_from_parser(parser);
 
 	if (!conn->header_size)
-		conn->header_size = (uint32_t)((char *)at - conn->data_buf);
+		conn->header_size = (uint32_t)((char *)at - conn->recv_buf);
 
 	if (conn->req_data_cb)
 		conn->req_data_cb(conn->req_data_arg, (char *)at, (ssize_t)length);
@@ -430,11 +432,6 @@ static int on_message_complete(llhttp_t *parser)
 		conn->req_data_cb(conn->req_data_arg, NULL, 0);
 		conn->req_data_cb = NULL;
 	}
-	if (!conn->f_cgi_complete) {
-		conn->connection_cb(conn->connection_arg, conn);
-		conn->f_cgi_complete = 1;
-	}
-
 	return HPE_PAUSED;
 }
 
@@ -442,7 +439,7 @@ static const llhttp_settings_t __parser_settings =
 {
 	.on_message_begin = on_message_begin,
 	.on_url = on_url,
-	.on_status = on_status,
+	.on_status = NULL,
 	.on_header_field = on_header_field,
 	.on_header_value = on_header_value,
 	.on_headers_complete = on_headers_complete,
@@ -452,65 +449,118 @@ static const llhttp_settings_t __parser_settings =
 	.on_chunk_complete = NULL
 };
 
-static mcl_http_conn_t *mcl_http_conn__create(mcl_http_t *hs)
+static mcl_http_conn_t *mcl_http_conn__create(mcl_http_conf_t *conf)
 {
+	int i;
 	mcl_http_conn_t *conn;
+
 	conn = (mcl_http_conn_t *)malloc(sizeof(mcl_http_conn_t));
+	if (conn == NULL)
+		return NULL;
+	memset(conn, 0, sizeof(mcl_http_conn_t));
 
-	if (conn != NULL) {
-		memset(conn, 0, sizeof(mcl_http_conn_t));
-		conn->hs = hs;
-		conn->stream = NULL;
-		conn->data_buf = NULL;
-
-		llhttp_init(&conn->parser, HTTP_REQUEST, &__parser_settings);
-		conn->parser.data = conn;
-
-		conn->ref_count = 0;
-		mcl_http__ref(hs);
+	conn->recv_buf_size = mcl_http_conf_get_header_buf_size(conf) + 1024;
+	conn->recv_buf = (char *)malloc(conn->recv_buf_size);
+	if (conn->recv_buf == NULL) {
+		free(conn);
+		return NULL;
+	}
+	conn->resp_buf_size = MCL_HTTP__RESP_BUF_SIZE;
+	conn->resp_buf = (char *)malloc(conn->resp_buf_size);
+	if (conn->resp_buf == NULL) {
+		free(conn->recv_buf);
+		free(conn);
+		return NULL;
+	}
+	conn->query_buf_size = mcl_http_conf_get_header_buf_size(conf) / 4;
+	conn->query_buf = (char *)malloc(conn->query_buf_size);
+	if (conn->resp_buf == NULL) {
+		free(conn->resp_buf);
+		free(conn->recv_buf);
+		free(conn);
+		return NULL;
 	}
 
+	QUEUE_INIT(&conn->field_queue);
+	QUEUE_INIT(&conn->query_queue);
+	RB_INIT(&conn->field_tree);
+	RB_INIT(&conn->query_tree);
+
+	for (i = 0; i < ARRAY_SIZE(conn->fieldbufs2); ++i)
+		mcl__memlist_release(&conn->fieldbufs, &conn->fieldbufs2[i]);
+
+	llhttp_init(&conn->parser, HTTP_REQUEST, &__parser_settings);
+	if (conf != NULL) {
+		conn->conf = conf;
+		mcl_http_conf__ref(conf);
+	}
 	return conn;
 }
 static void mcl_http_conn__destroy(mcl_http_conn_t *conn)
 {
 	mcl_http_field_t *field;
 
-	if (conn->data_buf != NULL)
-		free(conn->data_buf);
+	if (conn->conf != NULL)
+		mcl_http_conf__unref(conn->conf);
 
-	while (conn->field_pool != NULL) {
-		field = conn->field_pool;
-		conn->field_pool = field->next;
-		free(field);
+	while (conn->fieldbufs) {
+		field = (mcl_http_field_t *)mcl__memlist_get(&conn->fieldbufs, sizeof(mcl_http_field_t));
+		if (!(field >= conn->fieldbufs2 && field < conn->fieldbufs2 + ARRAY_SIZE(conn->fieldbufs2)))
+			mcl__memlist_release(NULL, field);
 	}
 
-	mcl_http__unref(conn->hs);
+	free(conn->recv_buf);
+	free(conn->resp_buf);
+	free(conn->query_buf);
 	free(conn);
 }
 static void mcl_http_conn__clean(mcl_http_conn_t *conn)
 {
 	mcl_http_field_t *field;
 
-	while (conn->field_first != NULL) {
-		field = conn->field_first;
-		conn->field_first = field->next;
-		mcl_http_field_delete(conn, field);
+	if (conn->field_first) {
+		mcl__memlist_release(&conn->fieldbufs, conn->field_first);
+		conn->field_first = NULL;
 	}
+
+	RB_INIT(&conn->field_tree);
+	RB_INIT(&conn->query_tree);
+	while (!QUEUE_EMPTY(&conn->field_queue)) {
+		field = QUEUE_DATA(QUEUE_HEAD(&conn->field_queue), mcl_http_field_t, queue);
+		QUEUE_REMOVE(&field->queue);
+		mcl__memlist_release(&conn->fieldbufs, field);
+	}
+	while (!QUEUE_EMPTY(&conn->query_queue)) {
+		field = QUEUE_DATA(QUEUE_HEAD(&conn->query_queue), mcl_http_field_t, queue);
+		QUEUE_REMOVE(&field->queue);
+		mcl__memlist_release(&conn->fieldbufs, field);
+	}
+
+	//QUEUE_INIT(&conn->field_queue);
+	//QUEUE_INIT(&conn->query_queue);
+	//while (!RB_EMPTY(&conn->field_tree)) {
+	//	field = RB_ROOT(&conn->field_tree);
+	//	RB_REMOVE(mcl_http_field_tree_s, &conn->field_tree, field);
+	//	mcl__memlist_release(&conn->fieldbufs, field);
+	//}
+	//while (!RB_EMPTY(&conn->query_tree)) {
+	//	field = RB_ROOT(&conn->query_tree);
+	//	RB_REMOVE(mcl_http_field_tree_s, &conn->query_tree, field);
+	//	mcl__memlist_release(&conn->fieldbufs, field);
+	//}
 }
 static void mcl_http_conn__reset(mcl_http_conn_t *conn)
 {
 	//conn->f_closing = 0;
+	conn->f_query_parsed = 0;
 	conn->f_req_begin = 0;
 	conn->f_req_complete = 0;
-	conn->f_cgi_complete = 0;
 	conn->f_resp_begin = 0;
 	conn->f_resp_complete = 0;
-	conn->f_internal_error = 0;
 	conn->error_code = 0;
 
 	if (conn->data_parsed < conn->data_received)
-		memmove(conn->data_buf, conn->data_buf + conn->data_parsed, conn->data_received - conn->data_parsed);
+		memmove(conn->recv_buf, conn->recv_buf + conn->data_parsed, conn->data_received - conn->data_parsed);
 	conn->data_received -= conn->data_parsed;
 	conn->data_parsed = 0;
 	conn->header_size = 0;
@@ -518,7 +568,6 @@ static void mcl_http_conn__reset(mcl_http_conn_t *conn)
 	conn->current_buf = NULL;
 	conn->current_len = 0;
 	conn->url = NULL;
-	//conn->field_first = NULL;
 
 	memset(&conn->resp, 0, sizeof(conn->resp));
 }
@@ -537,7 +586,7 @@ static void mcl_http_conn__unref(mcl_http_conn_t *conn)
 			conn->ref_count += 1;
 			mcl_http_connection_close(conn);
 			mcl_http_set_status(conn, conn->error_code);
-			mcl_http_write_data(conn, NULL, NULL, 0, NULL);
+			mcl_http_send_data(conn, NULL, 0, NULL, NULL);
 			conn->ref_count -= 1;
 		}
 		if (conn->ref_count == 1) {
@@ -563,6 +612,80 @@ static void mcl_http_conn__unref(mcl_http_conn_t *conn)
 	}
 }
 
+static int mcl_http__query_parse(mcl_http_conn_t *conn, char *query)
+{
+	unsigned int i;
+	unsigned int n, v, nl, vl;
+	mcl_http_field_t *field;
+
+	for (i = 0; query[i]; ) {
+		n = i;
+		while (query[i] && query[i] != '=' && query[i] != '&')
+			i++;
+		nl = i - n;
+
+		if (query[i] != '=') {
+			v = i;
+			vl = 0;
+		}
+		else {
+			query[i++] = 0;
+			v = i;
+			while (query[i] && query[i] != '&')
+				i++;
+			vl = i - v;
+		}
+
+		if (query[i])
+			query[i++] = 0;
+
+		nl = (unsigned int)mcl_urldecode(&query[n], nl, &query[n], nl + 1);
+		vl = (unsigned int)mcl_urldecode(&query[v], vl, &query[v], vl + 1);
+		if (query[n] || query[v]) {
+			field = (mcl_http_field_t *)mcl__memlist_get(&conn->fieldbufs, sizeof(mcl_http_field_t));
+			if (field == NULL)
+				break;
+			field->name = &query[n];
+			field->value = &query[v];
+			field->name_len = nl;
+			field->name_hash = mcl_http__hash(field->name, field->name_len);
+			QUEUE_INSERT_TAIL(&conn->query_queue, &field->queue);
+			RB_INSERT(mcl_http_field_tree_s, &conn->query_tree, field);
+		}
+
+		query += i;
+		i = 0;
+	}
+
+	return 0;
+}
+static int mcl_http__query_prepare(mcl_http_conn_t *conn)
+{
+	char *new_ptr;
+	unsigned int new_size;
+	const char *str;
+	unsigned int len;
+	if (!conn->f_query_parsed) {
+		str = mcl_url_get_query(&conn->urlparser, (int *)&len);
+		if (str != NULL && len > 0) {
+			if (conn->query_buf_size < len + 1) {
+				new_size = len + 1;
+				//new_size = new_size - new_size % 1024 + 1024;
+				new_ptr = (char *)realloc(conn->query_buf, new_size);
+				if (new_ptr == NULL)
+					return -1;
+				conn->query_buf = new_ptr;
+				conn->query_buf_size = new_size;
+			}
+			memcpy(conn->query_buf, str, len);
+			conn->query_buf[len] = 0;
+			mcl_http__query_parse(conn, conn->query_buf);
+		}
+		conn->f_query_parsed = 1;
+	}
+	return 0;
+}
+
 const mcl_urlparser_t *mcl_http_get_urlparser(mcl_http_conn_t *conn)
 {
 	return &conn->urlparser;
@@ -576,31 +699,76 @@ const char *mcl_http_get_path(mcl_http_conn_t *conn)
 	const char *p = mcl_url_get_path(&conn->urlparser, NULL);
 	return p ? p : "";
 }
-const char *mcl_http_get_query(mcl_http_conn_t *conn)
+const char *mcl_http_get_query(mcl_http_conn_t *conn, const char *name)
 {
-	const char *p = mcl_url_get_query(&conn->urlparser, NULL);
-	return p ? p : "";
+	if (name == NULL) {
+		const char *p = mcl_url_get_query(&conn->urlparser, NULL);
+		return p ? p : "";
+	}
+	else {
+		mcl_http_field_t *field;
+		mcl_http_field_t find;
+		mcl_http__query_prepare(conn);
+		find.name = name;
+		find.name_len = (unsigned int)strlen(name);
+		find.name_hash = mcl_http__hash(name, find.name_len);
+		field = RB_FIND(mcl_http_field_tree_s, &conn->query_tree, &find);
+		return field ? field->value : NULL;
+	}
 }
 const char *mcl_http_get_header(mcl_http_conn_t *conn, const char *name)
 {
-	mcl_http_field_t *field = conn->field_first;
-	while (field != NULL) {
-		if (mcl_strcasecmp(field->key, name) == 0)
-			return field->val;
-		field = field->next;
-	}
-	return NULL;
+	mcl_http_field_t *field;
+	mcl_http_field_t find;
+	find.name = name;
+	find.name_len = (unsigned int)strlen(name);
+	find.name_hash = mcl_http__hash(name, find.name_len);
+	field = RB_FIND(mcl_http_field_tree_s, &conn->field_tree, &find);
+	return field ? field->value : NULL;
 }
-int mcl_http_header_foreach(mcl_http_conn_t *conn, void *arg, mcl_http_header_cb cb)
+int mcl_http_query_parse(mcl_http_conn_t *conn, char *query)
 {
+	if (query == NULL)
+		return -1;
+	mcl_http__query_prepare(conn);
+	mcl_http__query_parse(conn, query);
+	return 0;
+}
+int mcl_http_header_foreach(mcl_http_conn_t *conn, void *arg, mcl_http_field_cb cb)
+{
+	QUEUE *ite;
+	mcl_http_field_t *field;
 	int n = 0;
-	mcl_http_field_t *field = conn->field_first;
-	while (field != NULL) {
+	QUEUE_FOREACH(ite, &conn->field_queue) {
+		field = QUEUE_DATA(ite, mcl_http_field_t, queue);
 		n += 1;
-		if (cb(arg, field->key, field->val))
+		if (cb(arg, field->name, field->value))
 			break;
-		field = field->next;
 	}
+	//RB_FOREACH(field, mcl_http_field_tree_s, &conn->field_tree) {
+	//	n += 1;
+	//	if (cb(arg, field->name, field->value))
+	//		break;
+	//}
+	return n;
+}
+int mcl_http_query_foreach(mcl_http_conn_t *conn, void *arg, mcl_http_field_cb cb)
+{
+	QUEUE *ite;
+	mcl_http_field_t *field;
+	int n = 0;
+	mcl_http__query_prepare(conn);
+	QUEUE_FOREACH(ite, &conn->query_queue) {
+		field = QUEUE_DATA(ite, mcl_http_field_t, queue);
+		n += 1;
+		if (cb(arg, field->name, field->value))
+			break;
+	}
+	//RB_FOREACH(field, mcl_http_field_tree_s, &conn->query_tree) {
+	//	n += 1;
+	//	if (cb(arg, field->name, field->value))
+	//		break;
+	//}
 	return n;
 }
 
@@ -620,13 +788,27 @@ int mcl_http_set_status(mcl_http_conn_t *conn, unsigned int status)
 
 static int mcl_http__set_header(mcl_http_conn_t *conn, const char *name, const char *value)
 {
-	unsigned int len;
-	len = (unsigned int)snprintf(conn->resp_fields_buf + conn->resp.fields_len, conn->resp_fields_buf_size - conn->resp.fields_len, "%s: %s\r\n", name, value);
+	char *new_ptr;
+	unsigned int new_size;
+	unsigned int name_len = (unsigned int)strlen(name);
+	unsigned int value_len = (unsigned int)strlen(value);
+	unsigned int buf_len = MCL_HTTP__STATUS_BUF_SIZE + conn->resp.fields_len;
 
-	if (len >= conn->resp_fields_buf_size - conn->resp.fields_len)
-		return UV_E2BIG;
+	if (conn->resp_buf_size < buf_len + name_len + value_len + 5) {
+		new_size = buf_len + name_len + value_len + 5;
+		new_size = new_size - new_size % 1024 + 1024;
+		new_ptr = (char *)realloc(conn->resp_buf, new_size + 1024);
+		if (new_ptr == NULL)
+			return UV_ENOMEM;
+		conn->resp_buf = new_ptr;
+		conn->resp_buf_size = new_size;
+	}
 
-	conn->resp.fields_len += len;
+	memcpy(conn->resp_buf + buf_len, name, name_len);   buf_len += (unsigned int)name_len;
+	memcpy(conn->resp_buf + buf_len, ": ", 2);          buf_len += 2;
+	memcpy(conn->resp_buf + buf_len, value, value_len); buf_len += (unsigned int)value_len;
+	memcpy(conn->resp_buf + buf_len, "\r\n", 2);        buf_len += 2;
+	conn->resp.fields_len = buf_len - MCL_HTTP__STATUS_BUF_SIZE;
 	return 0;
 }
 int mcl_http_set_header(mcl_http_conn_t *conn, const char *name, const char *value)
@@ -634,7 +816,7 @@ int mcl_http_set_header(mcl_http_conn_t *conn, const char *name, const char *val
 	int i;
 	unsigned int len = (unsigned int)strlen(name);
 
-	if (conn->hs->strict_mode) {
+	if (conn->conf && conn->conf->strict) {
 		// 非法字符检查.
 		for (i = 0; name[i]; ++i) {
 			if (name[i] == '\r' || name[i] == '\n' || name[i] == ':' || name[i] == ' ') {
@@ -702,7 +884,7 @@ int mcl_http_set_header(mcl_http_conn_t *conn, const char *name, const char *val
 	return 0;
 }
 
-static const char *mcl_http_status_string(mcl_http_t *hs, unsigned int status_code)
+static const char *mcl_http_status_string(mcl_http_conf_t *conf, unsigned int status_code)
 {
 	switch (status_code)
 	{
@@ -752,7 +934,7 @@ static void mcl_http__on_write(void *req, int status)
 {
 	mcl_http_write_t *write_req = (mcl_http_write_t *)req;
 	void *arg = write_req->arg;
-	mcl_http_write_cb write_cb = write_req->write_cb;
+	mcl_http_send_cb write_cb = write_req->write_cb;
 	mcl_http_conn_t *conn = write_req->conn;
 
 	free(write_req);
@@ -767,7 +949,7 @@ static void mcl_http__on_write_data(void *req, int status)
 {
 	mcl_http_write_t *write_req = (mcl_http_write_t *)req;
 	void *arg = write_req->arg;
-	mcl_http_write_cb write_cb = write_req->write_cb;
+	mcl_http_send_cb write_cb = write_req->write_cb;
 	mcl_http_conn_t *conn = write_req->conn;
 
 	free(write_req);
@@ -779,7 +961,7 @@ static void mcl_http__on_write_data(void *req, int status)
 	mcl_http_conn__unref(conn);
 }
 
-int mcl_http__write_data(mcl_http_conn_t *conn, mcl_http_write_t *write_req, const void *data, size_t length, mcl_stream_write_cb write_cb)
+static int mcl_http__write_data(mcl_http_conn_t *conn, const void *data, size_t length, mcl_http_write_t *write_req, mcl_stream_write_cb write_cb)
 {
 	int err;
 	int transfer_encoding;
@@ -792,7 +974,7 @@ int mcl_http__write_data(mcl_http_conn_t *conn, mcl_http_write_t *write_req, con
 	unsigned int nbufs = 0;
 
 	if (conn->f_resp_complete)
-		return UV_EBUSY;
+		return UV_EINVAL;
 	if (length > INT_MAX)
 		return UV_ENOMEM;
 
@@ -807,16 +989,16 @@ int mcl_http__write_data(mcl_http_conn_t *conn, mcl_http_write_t *write_req, con
 		status_code = conn->resp.status_code ? conn->resp.status_code : 200;
 
 		header_len = (uint32_t)snprintf(
-			conn->resp_status_buf, conn->resp_status_buf_size, "HTTP/%hu.%hu %u %s\r\n",
-			http_major, http_minor, status_code, mcl_http_status_string(conn->hs, status_code));
+			conn->resp_buf, MCL_HTTP__STATUS_BUF_SIZE, "HTTP/%hu.%hu %u %s\r\n",
+			http_major, http_minor, status_code, mcl_http_status_string(conn->conf, status_code));
 
-		if (header_len < conn->resp_status_buf_size) {
-			header_ptr = conn->resp_status_buf + conn->resp_status_buf_size - header_len;
-			memmove(header_ptr, conn->resp_status_buf, header_len);
+		if (header_len < MCL_HTTP__STATUS_BUF_SIZE) {
+			header_ptr = conn->resp_buf + MCL_HTTP__STATUS_BUF_SIZE - header_len;
+			memmove(header_ptr, conn->resp_buf, header_len);
 		}
 		else {
-			header_len = conn->resp_status_buf_size;
-			header_ptr = conn->resp_status_buf;
+			header_len = MCL_HTTP__STATUS_BUF_SIZE;
+			header_ptr = conn->resp_buf;
 			header_ptr[header_len - 2] = '\r';
 			header_ptr[header_len - 1] = '\n';
 		}
@@ -864,9 +1046,9 @@ int mcl_http__write_data(mcl_http_conn_t *conn, mcl_http_write_t *write_req, con
 		nbufs += 1;
 	}
 
-	err = mcl_stream_write(conn->stream, write_req, bufs, nbufs, write_cb);
+	err = mcl_stream_write(conn->stream, bufs, nbufs, write_req, write_cb);
 	if (err != 0) {
-		conn->f_internal_error = 1;
+		conn->error_code = 500;
 		return err;
 	}
 	mcl_http_conn__ref(conn);
@@ -887,7 +1069,7 @@ int mcl_http__write_data(mcl_http_conn_t *conn, mcl_http_write_t *write_req, con
 	return 0;
 }
 
-int mcl_http_write(mcl_http_conn_t *conn, void *arg, const void *data, size_t length, mcl_http_write_cb write_cb)
+int mcl_http_send(mcl_http_conn_t *conn, const void *data, size_t length, void *arg, mcl_http_send_cb write_cb)
 {
 	int err;
 	mcl_http_write_t *write_req;
@@ -895,27 +1077,27 @@ int mcl_http_write(mcl_http_conn_t *conn, void *arg, const void *data, size_t le
 	if (length > INT_MAX)
 		return UV_ENOMEM;
 	if (conn->f_resp_complete)
-		return UV_EBUSY;
+		return UV_EINVAL;
 	if (length == 0)
-		return mcl_http_write_data(conn, arg, NULL, 0, write_cb);
+		return mcl_http_send_data(conn, NULL, 0, arg, write_cb);
 
 	write_req = (mcl_http_write_t *)malloc(sizeof(mcl_http_write_t) + length);
 	if (write_req == NULL) {
-		conn->f_internal_error = 1;
+		conn->error_code = 500;
 		return UV_ENOMEM;
 	}
 	write_req->arg = arg;
 	write_req->write_cb = write_cb;
 	write_req->conn = conn;
 	memcpy(&write_req[1], data, length);
-	err = mcl_http__write_data(conn, write_req, &write_req[1], length, mcl_http__on_write);
+	err = mcl_http__write_data(conn, &write_req[1], length, write_req, mcl_http__on_write);
 	if (err < 0) {
 		free(write_req);
 		return err;
 	}
 	return 0;
 }
-int mcl_http_write_data(mcl_http_conn_t *conn, void *arg, const void *data, size_t length, mcl_http_write_cb write_cb)
+int mcl_http_send_data(mcl_http_conn_t *conn, const void *data, size_t length, void *arg, mcl_http_send_cb write_cb)
 {
 	int err;
 	mcl_http_write_t *write_req;
@@ -923,17 +1105,17 @@ int mcl_http_write_data(mcl_http_conn_t *conn, void *arg, const void *data, size
 	if (length > INT_MAX)
 		return UV_ENOMEM;
 	if (conn->f_resp_complete)
-		return UV_EBUSY;
+		return UV_EINVAL;
 
 	write_req = (mcl_http_write_t *)malloc(sizeof(mcl_http_write_t));
 	if (write_req == NULL) {
-		conn->f_internal_error = 1;
+		conn->error_code = 500;
 		return UV_ENOMEM;
 	}
 	write_req->arg = arg;
 	write_req->write_cb = write_cb;
 	write_req->conn = conn;
-	err = mcl_http__write_data(conn, write_req, data, length, mcl_http__on_write_data);
+	err = mcl_http__write_data(conn, data, length, write_req, mcl_http__on_write_data);
 	if (err < 0) {
 		free(write_req);
 		return err;
@@ -944,34 +1126,9 @@ int mcl_http_write_data(mcl_http_conn_t *conn, void *arg, const void *data, size
 
 static void mcl_http__on_alloc(mcl_stream_t *stream, size_t suggested_size, uv_buf_t *buf)
 {
-	uint32_t header_buf_size;
 	mcl_http_conn_t *conn = (mcl_http_conn_t *)stream->data;
-
-	if (conn->data_buf == NULL) {
-		assert(conn->data_received == 0);
-		header_buf_size = conn->hs->header_buf_size;
-		if (header_buf_size == 0)
-			header_buf_size = MCL_HTTP__HEADER_BUF_DEF_SIZE;
-		else if (header_buf_size < MCL_HTTP__HEADER_BUF_MIN_SIZE)
-			header_buf_size = MCL_HTTP__HEADER_BUF_MIN_SIZE;
-
-		// 请求头、请求内容、响应头、响应头余量.
-		conn->data_buf = malloc(header_buf_size + 1024 + header_buf_size + 1024);
-		if (conn->data_buf == NULL) {
-			buf->base = NULL;
-			buf->len = 0;
-			return;
-		}
-
-		conn->data_buf_size = header_buf_size + 1024;
-		conn->resp_status_buf = conn->data_buf + conn->data_buf_size;
-		conn->resp_status_buf_size = 256;
-		conn->resp_fields_buf = conn->resp_status_buf + conn->resp_status_buf_size;
-		conn->resp_fields_buf_size = header_buf_size - conn->resp_status_buf_size;
-	}
-
-	buf->base = conn->data_buf + conn->data_received;
-	buf->len = conn->data_buf_size - conn->data_received;
+	buf->base = conn->recv_buf + conn->data_received;
+	buf->len = conn->recv_buf_size - conn->data_received;
 }
 
 static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_t *buf)
@@ -986,7 +1143,7 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 		mcl_http_conn__unref(conn);
 		mcl_http_connection_close(conn);
 
-		llhttp_execute(&conn->parser, conn->data_buf + conn->data_parsed, 0);
+		llhttp_execute(&conn->parser, conn->recv_buf + conn->data_parsed, 0);
 		if (conn->req_data_cb) {
 			conn->req_data_cb(conn->req_data_arg, NULL, nread);
 			conn->req_data_cb = NULL;
@@ -996,7 +1153,7 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 		conn->data_received += (uint32_t)nread;
 
 		if (conn->data_received > conn->data_parsed) {
-			err = llhttp_execute(&conn->parser, conn->data_buf + conn->data_parsed, conn->data_received - conn->data_parsed);
+			err = llhttp_execute(&conn->parser, conn->recv_buf + conn->data_parsed, conn->data_received - conn->data_parsed);
 
 			if (conn->f_req_complete) {
 				// 请求接收完成.
@@ -1008,7 +1165,7 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 				else if (err == HPE_PAUSED) {
 					llhttp_resume(&conn->parser);
 					err = HPE_OK;
-					conn->data_parsed = (uint32_t)(llhttp_get_error_pos(&conn->parser) - conn->data_buf);
+					conn->data_parsed = (uint32_t)(llhttp_get_error_pos(&conn->parser) - conn->recv_buf);
 				}
 			}
 			else {
@@ -1023,7 +1180,7 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 				else {
 					mcl_stream_read_stop(conn->stream);
 					mcl_http_conn__unref(conn);
-					conn->data_parsed = (uint32_t)(llhttp_get_error_pos(&conn->parser) - conn->data_buf);
+					conn->data_parsed = (uint32_t)(llhttp_get_error_pos(&conn->parser) - conn->recv_buf);
 				}
 			}
 			if (err != HPE_OK) {
@@ -1036,7 +1193,7 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 				}
 				if (conn->ref_count == 1 && (conn->f_req_begin && !conn->f_resp_begin)) {
 					mcl_http_set_status(conn, 400);
-					mcl_http_write_data(conn, NULL, NULL, 0, NULL);
+					mcl_http_send_data(conn, NULL, 0, NULL, NULL);
 				}
 			}
 		}
@@ -1046,42 +1203,61 @@ static void mcl_http__on_read(mcl_stream_t *stream, ssize_t nread, const uv_buf_
 }
 
 
-mcl_http_t *mcl_http_create()
+mcl_http_conf_t *mcl_http_conf_create()
 {
-	mcl_http_t *hs = (mcl_http_t *)malloc(sizeof(mcl_http_t));
-	if (hs != NULL) {
-		memset(hs, 0, sizeof(mcl_http_t));
-		hs->ref_count = 1;
+	mcl_http_conf_t *conf = (mcl_http_conf_t *)malloc(sizeof(mcl_http_conf_t));
+	if (conf != NULL) {
+		memset(conf, 0, sizeof(mcl_http_conf_t));
+		conf->ref_count = 1;
 	}
-	return hs;
+	return conf;
 }
-void mcl_http_destroy(mcl_http_t *hs)
+void mcl_http_conf_destroy(mcl_http_conf_t *conf)
 {
-	ASSERT(!hs->closing);
-	hs->closing = 1;
-	mcl_http__unref(hs);
+	ASSERT(!conf->closing);
+	conf->closing = 1;
+	mcl_http_conf__unref(conf);
+}
+void mcl_http_conf_set_strict(mcl_http_conf_t *conf, int mode)
+{
+	conf->strict = !!mode;
+}
+void mcl_http_conf_set_header_buf_size(mcl_http_conf_t *conf, unsigned int size)
+{
+	if (size == 0)
+		conf->header_buf_size = MCL_HTTP__HEADER_BUF_DEF_SIZE;
+	else if (size < MCL_HTTP__HEADER_BUF_MIN_SIZE)
+		conf->header_buf_size = MCL_HTTP__HEADER_BUF_MIN_SIZE;
+	else
+		conf->header_buf_size = size;
+}
+int mcl_http_conf_get_strict(mcl_http_conf_t *conf)
+{
+	return conf ? conf->strict : 0;
+}
+unsigned int mcl_http_conf_get_header_buf_size(mcl_http_conf_t *conf)
+{
+	return conf ? conf->header_buf_size : MCL_HTTP__HEADER_BUF_DEF_SIZE;
 }
 
-int mcl_http_new_connection(mcl_http_t *hs, mcl_stream_t *stream, void *arg, mcl_http_connection_cb cb)
+int mcl_http_new_connection(mcl_stream_t *stream, mcl_http_conf_t *conf, void *arg, mcl_http_connection_cb cb)
 {
 	int err;
 	mcl_http_conn_t *conn;
 
-	conn = mcl_http_conn__create(hs);
+	conn = mcl_http_conn__create(conf);
 	if (conn == NULL)
 		return UV_ENOMEM;
-
 	conn->stream = stream;
 	conn->connection_cb = cb;
 	conn->connection_arg = arg;
 
-	conn->stream->data = conn;
 	err = mcl_stream_read_start(stream, mcl_http__on_alloc, mcl_http__on_read);
 	if (err < 0) {
 		mcl_http_conn__destroy(conn);
 		return err;
 	}
-
+	conn->stream->data = conn;
 	mcl_http_conn__ref(conn);
 	return 0;
 }

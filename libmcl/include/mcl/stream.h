@@ -19,7 +19,7 @@ typedef void(*mcl_stream_write_cb)(void *arg, int status);
 typedef void(*mcl_stream_close_fn)(mcl_stream_t *strm, mcl_stream_close_cb close_cb);
 typedef int(*mcl_stream_read_start_fn)(mcl_stream_t *strm, mcl_stream_alloc_cb alloc_cb, mcl_stream_read_cb read_cb);
 typedef int(*mcl_stream_read_stop_fn)(mcl_stream_t *strm);
-typedef int(*mcl_stream_write_fn)(mcl_stream_t *strm, void *arg, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb);
+typedef int(*mcl_stream_write_fn)(mcl_stream_t *strm, const uv_buf_t *bufs, unsigned int nbufs, void *arg, mcl_stream_write_cb write_cb);
 typedef int(*mcl_stream_crack_fn)(mcl_stream_t *strm);
 typedef int(*mcl_stream_get_prop_fn)(mcl_stream_t *strm, int name, void *val, int *len);
 typedef int(*mcl_stream_set_prop_fn)(mcl_stream_t *strm, int name, const void *val, int len);
@@ -58,8 +58,8 @@ enum MCL_STREAM_PROP
 #define mcl_stream_read_stop(strm) \
 	((strm)->vtbl.read_stop ? (strm)->vtbl.read_stop((strm)) : -1)
 
-#define mcl_stream_write(strm, arg, bufs, nbufs, write_cb) \
-	((strm)->vtbl.write ? (strm)->vtbl.write((strm), (arg), (bufs), (nbufs), (write_cb)) : -1)
+#define mcl_stream_write(strm, bufs, nbufs, arg, write_cb) \
+	((strm)->vtbl.write ? (strm)->vtbl.write((strm), (bufs), (nbufs), (arg), (write_cb)) : -1)
 
 #define mcl_stream_crack(strm) \
 	((strm)->vtbl.crack ? (strm)->vtbl.crack((strm)) : -1)

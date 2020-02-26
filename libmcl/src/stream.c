@@ -5,40 +5,6 @@
 #include <memory.h>
 
 
-struct mcl__memlist
-{
-	struct mcl__memlist *n;
-};
-
-static __inline void *mcl__memlist_get(void **memlist, size_t size)
-{
-	void *mem;
-	struct mcl__memlist **_memlist = (struct mcl__memlist **)memlist;
-
-	if (!_memlist || !*_memlist)
-		mem = malloc(size);
-	else {
-		mem = *_memlist;
-		*_memlist = (*_memlist)->n;
-	}
-
-	return mem;
-}
-static __inline void mcl__memlist_release(void **memlist, void *mem)
-{
-	struct mcl__memlist *_mem = (struct mcl__memlist *)mem;
-	struct mcl__memlist **_memlist = (struct mcl__memlist **)memlist;
-
-	if (!_memlist)
-		free(mem);
-	else {
-		_mem->n = *_memlist;
-		*_memlist = _mem;
-	}
-}
-
-
-
 /****************************************************************/
 
 typedef struct mcl_uvstream_s mcl_uvstream_t;
@@ -214,7 +180,7 @@ static int mcl_uvstream_read_stop(mcl_stream_t *strm)
 
 	return 0;
 }
-static int mcl_uvstream_write(mcl_stream_t *strm, void *arg, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb)
+static int mcl_uvstream_write(mcl_stream_t *strm, const uv_buf_t *bufs, unsigned int nbufs, void *arg, mcl_stream_write_cb write_cb)
 {
 	int err;
 	mcl_uvstream_write_t *req;
@@ -664,7 +630,7 @@ struct mcl_sslstream_s
 	uv_work_t work;
 	mcl_sslstream_close_t closereq;
 	void *writereqs;
-	mcl_sslstream_write_t writereqs2[4];
+	mcl_sslstream_write_t writereqs2[8];
 	void *readreqs;
 	mcl_sslstream_on_read_t readreqs2[4];
 
@@ -1551,7 +1517,7 @@ static void mcl_sslstream__on_write(void *arg, int status)
 			mcl_sslstream_write__delete(handle, req);
 		}
 		else {
-			err = mcl_stream_write(handle->uvstream, req, req->bufs + req->nbufs, req->nbiobufs, mcl_sslstream__on_write);
+			err = mcl_stream_write(handle->uvstream, req->bufs + req->nbufs, req->nbiobufs, req, mcl_sslstream__on_write);
 			if (err < 0) {
 				mcl_sslstream__set_writerr(handle, err);
 				if (req->write_cb)
@@ -1617,7 +1583,7 @@ static void mcl_sslstream__s_write(mcl_sslstream_t *handle, mcl_sslstream_write_
 		}
 		else {
 			req->handle = handle;
-			err = mcl_stream_write(handle->uvstream, req, req->bufs + req->nbufs, req->nbiobufs, mcl_sslstream__on_write);
+			err = mcl_stream_write(handle->uvstream, req->bufs + req->nbufs, req->nbiobufs, req, mcl_sslstream__on_write);
 			if (err < 0) {
 				mcl_sslstream__set_writerr(handle, err);
 				if (req->write_cb)
@@ -1702,7 +1668,7 @@ static int mcl_sslstream_read_stop(mcl_stream_t *strm)
 
 	return 0;
 }
-static int mcl_sslstream_write(mcl_stream_t *strm, void *arg, const uv_buf_t *bufs, unsigned int nbufs, mcl_stream_write_cb write_cb)
+static int mcl_sslstream_write(mcl_stream_t *strm, const uv_buf_t *bufs, unsigned int nbufs, void *arg, mcl_stream_write_cb write_cb)
 {
 	void *new_ptr;
 	mcl_sslstream_write_t *req;

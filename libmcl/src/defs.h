@@ -45,17 +45,8 @@
 
 
 
-#define MCL_HANDLE_CLOSING          0x00000100
-#define MCL_HANDLE_CLOSED           0x00000200
-#define MCL_HANDLE_ACTIVE           0x00000400
-#define MCL_HANDLE_ENDGAME_QUEUED   0x00001000
+void *mcl__memlist_get(void **memlist, size_t size);
+void mcl__memlist_release(void **memlist, void *mem);
 
-
-#define MCL_STREAM_WRITING          0x01000000
-#define MCL_STREAM_WRITEABLE        0x02000000
-
-#define MCL_WORKER_WAITING          0x01000000
-#define MCL_WORKER_THREAD_REF       0x01000000
-#define MCL_WORKER_THREAD_UNREF     0x02000000
 
 #endif

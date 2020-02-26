@@ -16,6 +16,7 @@ MCL_APIDECL mcl_server_t *mcl_server_pipe_create(uv_loop_t *loop, const char *na
 MCL_APIDECL void mcl_server_destroy(mcl_server_t *serv);
 MCL_APIDECL int mcl_server_start(mcl_server_t *serv, void *arg, mcl_connection_cb cb);
 MCL_APIDECL int mcl_server_stop(mcl_server_t *serv);
+MCL_APIDECL int mcl_server_get_error(mcl_server_t *serv);
 
 
 MCL_END_EXTERN_C

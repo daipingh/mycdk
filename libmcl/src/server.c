@@ -11,10 +11,12 @@
 
 struct mcl_server_s
 {
-	int delay_error;
+	int uvstream_type;
 	int handle_busying;
 	int serv_active;
 	int serv_closing;
+	int last_error;
+	int delay_error;
 
 	mcl_connection_cb connection_cb;
 	void *connection_arg;
@@ -22,7 +24,6 @@ struct mcl_server_s
 	uv_loop_t *loop;
 	uv_timer_t timer;
 
-	int uvstream_type;
 	union {
 		uv_handle_t handle;
 		uv_stream_t stream;
@@ -39,32 +40,39 @@ struct mcl_server_s
 
 /****************************************************************/
 
-static void mcl_server__check(mcl_server_t *server);
-
+static void mcl_server__start(mcl_server_t *server);
 
 static void mcl_server__on_timer_close(uv_handle_t *handle)
 {
 	mcl_server_t *server = container_of(handle, mcl_server_t, timer);
 	ASSERT(server->serv_closing);
 	server->timer.loop = NULL;
-	mcl_server__check(server);
+	if (server->handle_busying == 0 && server->timer.loop == NULL)
+		free(server);
 }
 static void mcl_server__on_stream_close(uv_handle_t *handle)
 {
-	int err;
 	mcl_server_t *server = container_of(handle, mcl_server_t, handle);
 	server->handle_busying = 0;
 
-	if (server->serv_active) {
-		err = server->delay_error;
-		if (err == UV_EAFNOSUPPORT || err == UV_ENOSYS) {
-			server->serv_active = 0;
-			uv_timer_stop(&server->timer);
-			server->connection_cb(server->connection_arg, NULL);
-		}
-		else {
-			if (!uv_is_active((uv_handle_t *)&server->timer))
-				mcl_server__check(server);
+	if (server->serv_closing) {
+		if (server->handle_busying == 0 && server->timer.loop == NULL)
+			free(server);
+	}
+	else {
+		if (server->serv_active) {
+			if (server->delay_error < 0) {
+				// 发生错误.
+				if (!uv_is_active((uv_handle_t *)&server->timer)) {
+					server->serv_active = 0;
+					server->connection_cb(server->connection_arg, NULL);
+				}
+			}
+			else {
+				// 重新启动.
+				ASSERT(!uv_is_active((uv_handle_t *)&server->timer));
+				mcl_server__start(server);
+			}
 		}
 	}
 }
@@ -73,8 +81,10 @@ static void mcl_server__on_timeout(uv_timer_t *timer)
 	mcl_server_t *server = container_of(timer, mcl_server_t, timer);
 	ASSERT(server->serv_active);
 
-	if (server->handle_busying == 0)
-		mcl_server__check(server);
+	if (server->handle_busying == 0) {
+		server->serv_active = 0;
+		server->connection_cb(server->connection_arg, NULL);
+	}
 }
 static void mcl_server__on_new_connection(uv_stream_t *stream, int status)
 {
@@ -85,68 +95,70 @@ static void mcl_server__on_new_connection(uv_stream_t *stream, int status)
 		client = mcl_uvstream_accept(server->loop, stream, &status, NULL);
 		if (status == 0) {
 			CHECK(client != NULL);
+			server->last_error = 0;
 			server->connection_cb(server->connection_arg, client);
 		}
 	}
 	if (status < 0) {
+		// 与上次错误相同时设置延迟.
 		server->delay_error = status;
+		if (server->last_error == status)
+			uv_timer_start(&server->timer, mcl_server__on_timeout, 1000, 0);
+		else
+			server->last_error = status;
 		uv_close(&server->handle, mcl_server__on_stream_close);
-		uv_timer_start(&server->timer, mcl_server__on_timeout, 1000, 0);
 	}
 }
-static void mcl_server__check(mcl_server_t *server)
+
+static void mcl_server__start(mcl_server_t *server)
 {
-	int err = 0;
+	int err;
+	ASSERT(!server->serv_closing);
+	ASSERT(server->serv_active);
 
-	if (server->serv_closing) {
-		// 析构状态.
-		if (server->handle_busying == 0 && server->timer.loop == NULL) {
-			free(server);
+	if (!server->handle_busying) {
+		server->handle_busying = 1;
+
+		switch (server->uvstream_type)
+		{
+		case UVSTREAM_TYPE_TCP:
+			uv_tcp_init(server->loop, &server->tcp);
+			if (!(err = uv_tcp_bind(&server->tcp, &server->sa, 0)))
+				err = uv_listen(&server->stream, 5, mcl_server__on_new_connection);
+			break;
+
+		case UVSTREAM_TYPE_PIPE:
+			uv_pipe_init(server->loop, &server->pipe, 0);
+			if (!(err = uv_pipe_bind(&server->pipe, server->pipe_path)))
+				err = uv_listen(&server->stream, 5, mcl_server__on_new_connection);
+			break;
+
+		default:
+			err = UV_UNKNOWN;
+			uv_tcp_init(server->loop, &server->tcp);
+			UNREACHABLE();
+			break;
 		}
-	}
-	else if (server->serv_active) {
-		// 工作状态.
-		if (server->handle_busying == 0) {
-			server->handle_busying = 1;
-			uv_timer_stop(&server->timer);
 
-			switch (server->uvstream_type)
-			{
-			case UVSTREAM_TYPE_TCP:
-				uv_tcp_init(server->loop, &server->tcp);
-				if (!(err = uv_tcp_bind(&server->tcp, &server->sa, 0)))
-					err = uv_listen(&server->stream, 5, mcl_server__on_new_connection);
-				break;
-
-			case UVSTREAM_TYPE_PIPE:
-				uv_pipe_init(server->loop, &server->pipe, 0);
-				if (!(err = uv_pipe_bind(&server->pipe, server->pipe_path)))
-					err = uv_listen(&server->stream, 5, mcl_server__on_new_connection);
-				break;
-
-			default:
-				UNREACHABLE();
-				break;
-			}
-
+		if (err < 0) {
+			// 与上次错误相同时设置延迟.
 			server->delay_error = err;
-			if (err < 0) {
-				uv_close(&server->handle, mcl_server__on_stream_close);
-				if (err == UV_EAFNOSUPPORT || err == UV_ENOSYS)
-					;// uv_timer_start(&server->timer, mcl_server__on_timeout, 0, 0);
-				else
-					uv_timer_start(&server->timer, mcl_server__on_timeout, 3000, 0);
-			}
+			if (server->last_error == err)
+				uv_timer_start(&server->timer, mcl_server__on_timeout, 1000, 0);
+			else
+				server->last_error = err;
+			uv_close(&server->handle, mcl_server__on_stream_close);
 		}
 	}
 }
 
 static int mcl_server_init(mcl_server_t *server, int type, uv_loop_t *loop, const void *addr, size_t addr_len)
 {
-	server->delay_error = 0;
 	server->handle_busying = 0;
 	server->serv_active = 0;
 	server->serv_closing = 0;
+	server->last_error = 0;
+	server->delay_error = 0;
 
 	server->connection_cb = NULL;
 	server->connection_arg = NULL;
@@ -235,28 +247,35 @@ void mcl_server_destroy(mcl_server_t *serv)
 int mcl_server_start(mcl_server_t *serv, void *arg, mcl_connection_cb cb)
 {
 	mcl_server_t *server = serv;
+	ASSERT(!server->serv_closing);
 
 	if (server->serv_active)
 		return UV_EBUSY;
+	if (server->serv_closing)
+		return UV_EINVAL;
 
 	server->serv_active = 1;
+	server->delay_error = 0;
 	server->connection_arg = arg;
 	server->connection_cb = cb;
 
-	mcl_server__check(server);
+	mcl_server__start(server);
 	return 0;
 }
 int mcl_server_stop(mcl_server_t *serv)
 {
 	mcl_server_t *server = serv;
-	
-	if (!server->serv_active)
-		return 0;
 
-	if (server->handle_busying && !uv_is_closing(&server->handle))
-		uv_close(&server->handle, mcl_server__on_stream_close);
-	uv_timer_stop(&server->timer);
+	if (server->serv_active) {
+		server->serv_active = 0;
+		if (server->handle_busying && !uv_is_closing(&server->handle))
+			uv_close(&server->handle, mcl_server__on_stream_close);
+		uv_timer_stop(&server->timer);
+	}
 
-	server->serv_active = 0;
 	return 0;
+}
+int mcl_server_get_error(mcl_server_t *serv)
+{
+	return serv->delay_error;
 }

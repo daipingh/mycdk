@@ -66,7 +66,7 @@ public:
 			std::shared_ptr<uv_buf_t> uvbuf = std::move(closure->uvbuf);
 			if (nread < 0)
 				strm->read_closure.reset();
-			closure->read_cb(strm, nread,  uvbuf);
+			closure->read_cb(strm, nread, uvbuf);
 		});
 
 		if (err == 0) {
@@ -106,9 +106,9 @@ public:
 
 		err = mcl_stream_write(
 			c_ptr.get(),
-			closure,
 			pbufs.data(),
 			(unsigned int)pbufs.size(),
+			closure,
 			[](void *arg, int status) {
 			_Closure *closure = (_Closure *)arg;
 			closure->write_cb(status);
@@ -161,247 +161,307 @@ private:
 class urlparser
 {
 public:
-	const mcl_urlparser_t *c_ptr()
+	std::shared_ptr<mcl_urlparser_t> get_c_ptr()
 	{
-		return &parser;
+		return parser;
+	}
+	std::shared_ptr<const mcl_urlparser_t> get_c_ptr() const
+	{
+		return parser;
 	}
 
-	int parse(const mcl_urlparser_t *p)
-	{
-		url = p->url;
-		memcpy(&parser, p, sizeof(mcl_urlparser_t));
-		parser.url = url.c_str();
-	}
 	int parse(const std::string &u)
 	{
-		url = u;
-		return mcl_url_parse(&parser, url.c_str(), url.length());
+		*url = u;
+		return mcl_url_parse(parser.get(), url->c_str(), url->length());
 	}
 	int parse(std::string &&u)
 	{
-		url = std::move(u);
-		return mcl_url_parse(&parser, url.c_str(), url.length());
+		*url = std::move(u);
+		return mcl_url_parse(parser.get(), url->c_str(), url->length());
 	}
 
-	std::string get_schema() const { int r; const char *p = mcl_url_get_schema(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_schema(int &r) const { const char *p = mcl_url_get_schema(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_host() const { int r; const char *p = mcl_url_get_host(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_host(int &r) const { const char *p = mcl_url_get_host(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_port() const { int r; const char *p = mcl_url_get_port(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_port(int &r) const { const char *p = mcl_url_get_port (&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_path() const { int r; const char *p = mcl_url_get_path(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_path(int &r) const { const char *p = mcl_url_get_path(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_query() const { int r; const char *p = mcl_url_get_query(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_query(int &r) const { const char *p = mcl_url_get_query(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_fragment() const { int r; const char *p = mcl_url_get_fragment(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_fragment(int &r) const { const char *p = mcl_url_get_fragment(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_userinfo() const { int r; const char *p = mcl_url_get_userinfo(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
-	std::string get_userinfo(int &r) const { const char *p = mcl_url_get_userinfo(&parser, &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_schema() const { int r; const char *p = mcl_url_get_schema(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_schema(int &r) const { const char *p = mcl_url_get_schema(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_host() const { int r; const char *p = mcl_url_get_host(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_host(int &r) const { const char *p = mcl_url_get_host(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_port() const { int r; const char *p = mcl_url_get_port(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_port(int &r) const { const char *p = mcl_url_get_port(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_path() const { int r; const char *p = mcl_url_get_path(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_path(int &r) const { const char *p = mcl_url_get_path(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_query() const { int r; const char *p = mcl_url_get_query(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_query(int &r) const { const char *p = mcl_url_get_query(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_fragment() const { int r; const char *p = mcl_url_get_fragment(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_fragment(int &r) const { const char *p = mcl_url_get_fragment(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_userinfo() const { int r; const char *p = mcl_url_get_userinfo(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
+	std::string get_userinfo(int &r) const { const char *p = mcl_url_get_userinfo(parser.get(), &r); return r < 0 ? std::string() : std::string(p, r); }
 
 	urlparser()
 	{
-		memset(&parser, 0, sizeof(mcl_urlparser_t));
-		parser.url = url.c_str();
+		auto s = std::make_shared<std::string>();
+		url = s;
+		parser = std::shared_ptr<mcl_urlparser_t>(new mcl_urlparser_t, [s](mcl_urlparser_t *p) { delete p; });
+		mcl_url_parse(parser.get(), url->c_str(), url->length());
 	}
-	urlparser(const mcl_urlparser_t *p) : url(p->url)
+	urlparser(const std::string &u)
 	{
-		memcpy(&parser, p, sizeof(mcl_urlparser_t));
-		parser.url = url.c_str();
+		auto s = std::make_shared<std::string>(u);
+		url = s;
+		parser = std::shared_ptr<mcl_urlparser_t>(new mcl_urlparser_t, [s](mcl_urlparser_t *p) { delete p; });
+		mcl_url_parse(parser.get(), url->c_str(), url->length());
 	}
-	urlparser(const std::string &u) : url(u)
+	urlparser(std::string &&u)
 	{
-		mcl_url_parse(&parser, url.c_str(), url.length());
+		auto s = std::make_shared<std::string>(std::move(u));
+		url = s;
+		parser = std::shared_ptr<mcl_urlparser_t>(new mcl_urlparser_t, [s](mcl_urlparser_t *p) { delete p; });
+		mcl_url_parse(parser.get(), url->c_str(), url->length());
 	}
-	urlparser(std::string &&u) : url(std::move(u))
+
+	urlparser(const std::shared_ptr<mcl_urlparser_t> &_p)
 	{
-		mcl_url_parse(&parser, url.c_str(), url.length());
+		auto s = std::make_shared<std::string>();
+		url = s;
+		parser = std::shared_ptr<mcl_urlparser_t>(_p.get(), [_p, s](mcl_urlparser_t *p) { p = nullptr; });
 	}
 
 private:
-	mcl_urlparser_t parser;
-	std::string url;
+	std::shared_ptr<mcl_urlparser_t> parser;
+	std::shared_ptr<std::string> url;
 };
 
-class http_conn :
-	public std::enable_shared_from_this<http_conn>
+class http
 {
 public:
-	typedef std::function<int(const char *name, const char *value)> header_cb_type;
-	typedef std::function<void(const char *chunk, ssize_t length)> data_cb_type;
-	typedef std::function<void(int status)> write_cb_type;
+	class conn :
+		public std::enable_shared_from_this<conn>
+	{
+	public:
+		typedef std::function<int(const char *name, const char *value)> field_cb_type;
+		typedef std::function<void(const char *chunk, ssize_t length)> data_cb_type;
+		typedef std::function<void(int status)> send_cb_type;
 
-	std::shared_ptr<http_conn> get_ptr()
-	{
-		return shared_from_this();
-	}
-	std::shared_ptr<mcl_http_conn_t> get_c_ptr()
-	{
-		return c_ptr;
-	}
-
-	const std::shared_ptr<const urlparser> &get_urlparser()
-	{
-		return uparser;
-	}
-	const char *get_method()
-	{
-		return mcl_http_get_method(c_ptr.get());
-	}
-	const char *get_path()
-	{
-		return mcl_http_get_path(c_ptr.get());
-	}
-	const char *get_query()
-	{
-		return mcl_http_get_query(c_ptr.get());
-	}
-	const char *get_header(const char *name)
-	{
-		return mcl_http_get_header(c_ptr.get(), name);
-	}
-
-	int header_foreach(const header_cb_type &header_cb)
-	{
-		header_cb_type _header_cb = header_cb;
-		return mcl_http_header_foreach(
-			c_ptr.get(), &_header_cb,
-			[](void *arg, const char *name, const char *value) {
-			return (*(header_cb_type *)arg)(name, value);
-		});
-	}
-	int on_content(const data_cb_type &data_cb)
-	{
-		struct _Closure
+		std::shared_ptr<conn> get_ptr()
 		{
-			_Closure(const data_cb_type &data_cb) : data_cb(data_cb) {}
-
-			data_cb_type data_cb;
-		};
-		int err;
-		_Closure *closure = new _Closure(data_cb);
-
-		err = mcl_http_on_content(
-			c_ptr.get(), closure,
-			[](void *arg, const char *chunk, ssize_t length) {
-			_Closure *closure = (_Closure *)arg;
-			closure->data_cb(chunk, length);
-			delete closure;
-		});
-
-		if (err < 0)
-			delete closure;
-		return err;
-	}
-
-	int set_status(unsigned int status)
-	{
-		return mcl_http_set_status(c_ptr.get(), status);
-	}
-	int set_header(const char *name, const char *value)
-	{
-		return mcl_http_set_header(c_ptr.get(), name, value);
-	}
-	int write(const void *data, size_t length, const write_cb_type &write_cb)
-	{
-		struct _Closure
+			return shared_from_this();
+		}
+		std::shared_ptr<mcl_http_conn_t> get_c_ptr()
 		{
-			_Closure(const write_cb_type &write_cb) : write_cb(write_cb) {}
+			return c_ptr;
+		}
 
-			write_cb_type write_cb;
-		};
-		int err;
-		_Closure *closure = new _Closure(write_cb);
-
-		err = mcl_http_write(
-			c_ptr.get(), closure, data, length,
-			[](void *arg, int status) {
-			_Closure *closure = (_Closure *)arg;
-			closure->write_cb(status);
-			delete closure;
-		});
-
-		if (err < 0)
-			delete closure;
-		return err;
-	}
-	int write_data(const void *data, size_t length, const write_cb_type &write_cb)
-	{
-		struct _Closure
+		std::shared_ptr<const urlparser> get_urlparser()
 		{
-			_Closure(const write_cb_type &write_cb) : write_cb(write_cb) {}
+			std::shared_ptr<const urlparser> p = uparser.lock();
+			if (!p.get()) {
+				std::shared_ptr<mcl_http_conn_t> c = c_ptr;
+				p = std::make_shared<const urlparser>(
+					std::shared_ptr<mcl_urlparser_t>((mcl_urlparser_t *)mcl_http_get_urlparser(c.get()), [c](mcl_urlparser_t *p) { p = NULL; }));
+				uparser = p;
+			}
+			return p;
+		}
+		const char *get_method()
+		{
+			return mcl_http_get_method(c_ptr.get());
+		}
+		const char *get_path()
+		{
+			return mcl_http_get_path(c_ptr.get());
+		}
+		const char *get_query(const char *name)
+		{
+			return mcl_http_get_query(c_ptr.get(), name);
+		}
+		const char *get_header(const char *name)
+		{
+			return mcl_http_get_header(c_ptr.get(), name);
+		}
 
-			write_cb_type write_cb;
-		};
-		int err;
-		_Closure *closure = new _Closure(write_cb);
+		//int query_parse(char *query)
+		//{
+		//	return mcl_http_query_parse(c_ptr.get(), query);
+		//}
 
-		err = mcl_http_write_data(
-			c_ptr.get(), closure, data, length,
-			[](void *arg, int status) {
-			_Closure *closure = (_Closure *)arg;
-			closure->write_cb(status);
-			delete closure;
-		});
+		int header_foreach(const field_cb_type &field_cb)
+		{
+			field_cb_type _field_cb = field_cb;
+			return mcl_http_header_foreach(
+				c_ptr.get(), &_field_cb,
+				[](void *arg, const char *name, const char *value) {
+				return (*(field_cb_type *)arg)(name, value);
+			});
+		}
+		int query_foreach(const field_cb_type &field_cb)
+		{
+			field_cb_type _field_cb = field_cb;
+			return mcl_http_query_foreach(
+				c_ptr.get(), &_field_cb,
+				[](void *arg, const char *name, const char *value) {
+				return (*(field_cb_type *)arg)(name, value);
+			});
+		}
+		int on_content(const data_cb_type &data_cb)
+		{
+			struct _Closure
+			{
+				_Closure(const data_cb_type &data_cb) : data_cb(data_cb) {}
 
-		if (err < 0)
-			delete closure;
-		return err;
-	}
+				data_cb_type data_cb;
+			};
+			int err;
+			_Closure *closure = new _Closure(data_cb);
 
-	static std::shared_ptr<http_conn> wrap(const std::shared_ptr<mcl_http_conn_t> &conn, void *mem = nullptr)
+			err = mcl_http_on_content(
+				c_ptr.get(), closure,
+				[](void *arg, const char *chunk, ssize_t length) {
+				_Closure *closure = (_Closure *)arg;
+				closure->data_cb(chunk, length);
+				delete closure;
+			});
+
+			if (err < 0)
+				delete closure;
+			return err;
+		}
+
+		int set_status(unsigned int status)
+		{
+			return mcl_http_set_status(c_ptr.get(), status);
+		}
+		int set_header(const char *name, const char *value)
+		{
+			return mcl_http_set_header(c_ptr.get(), name, value);
+		}
+		int send(const void *data, size_t length)
+		{
+			return mcl_http_send(c_ptr.get(), data, length, nullptr, nullptr);
+		}
+		int send(const void *data, size_t length, const send_cb_type &send_cb)
+		{
+			struct _Closure
+			{
+				_Closure(const send_cb_type &send_cb) : send_cb(send_cb) {}
+
+				send_cb_type send_cb;
+			};
+			int err;
+			_Closure *closure = new _Closure(send_cb);
+
+			err = mcl_http_send(
+				c_ptr.get(), data, length,
+				closure,
+				[](void *arg, int status) {
+				_Closure *closure = (_Closure *)arg;
+				closure->send_cb(status);
+				delete closure;
+			});
+
+			if (err < 0)
+				delete closure;
+			return err;
+		}
+		int send_data(const void *data, size_t length)
+		{
+			return mcl_http_send_data(c_ptr.get(), data, length, nullptr, nullptr);
+		}
+		int send_data(const void *data, size_t length, const send_cb_type &send_cb)
+		{
+			struct _Closure
+			{
+				_Closure(const send_cb_type &send_cb) : send_cb(send_cb) {}
+
+				send_cb_type send_cb;
+			};
+			int err;
+			_Closure *closure = new _Closure(send_cb);
+
+			err = mcl_http_send_data(
+				c_ptr.get(), data, length,
+				closure,
+				[](void *arg, int status) {
+				_Closure *closure = (_Closure *)arg;
+				closure->send_cb(status);
+				delete closure;
+			});
+
+			if (err < 0)
+				delete closure;
+			return err;
+		}
+
+	protected:
+		conn(const std::shared_ptr<mcl_http_conn_t> &con) : c_ptr(con) {}
+		conn() = delete;
+		conn(const conn &) = delete;
+		conn(conn &&) = delete;
+
+	private:
+		std::shared_ptr<mcl_http_conn_t> c_ptr;
+		std::weak_ptr<const urlparser> uparser;
+	};
+
+	class conf :
+		public std::enable_shared_from_this<conf>
 	{
-		return mem ?
-			std::shared_ptr<http_conn>(new(mem) http_conn(conn), [](http_conn *conn) { conn->~http_conn(); }) :
-			std::shared_ptr<http_conn>(new http_conn(conn));
-	}
+	public:
 
-protected:
-	http_conn(const std::shared_ptr<mcl_http_conn_t> &conn) : c_ptr(conn), uparser(std::make_shared<urlparser>(mcl_http_get_urlparser(conn.get()))) {}
-	http_conn() = delete;
-	http_conn(const http_conn &) = delete;
-	http_conn(http_conn &&) = delete;
+		std::shared_ptr<conf> get_ptr()
+		{
+			return shared_from_this();
+		}
+		std::shared_ptr<mcl_http_conf_t> get_c_ptr()
+		{
+			return c_ptr;
+		}
 
-private:
-	std::shared_ptr<mcl_http_conn_t> c_ptr;
-	std::shared_ptr<const urlparser> uparser;
-};
+		static std::shared_ptr<conf> create()
+		{
+			std::shared_ptr<conf> cfg;
+			mcl_http_conf_t *p = mcl_http_conf_create();
+			if (p != nullptr)
+				cfg = std::shared_ptr<conf>(new conf(std::shared_ptr<mcl_http_conf_t>(p, [](mcl_http_conf_t *p) { mcl_http_conf_destroy(p); })));
+			return cfg;
+		}
 
-class http :
-	public std::enable_shared_from_this<http>
-{
-public:
-	typedef std::function<void(std::shared_ptr<http_conn>)> connection_cb_type;
+	protected:
+		conf(const std::shared_ptr<mcl_http_conf_t> &cfg) : c_ptr(cfg) {}
+		conf() = delete;
+		conf(const conf &) = delete;
+		conf(conf &&) = delete;
 
-	std::shared_ptr<http> get_ptr()
+	private:
+		std::shared_ptr<mcl_http_conf_t> c_ptr;
+	};
+
+
+	typedef std::function<void(std::shared_ptr<conn>)> connection_cb_type;
+
+	static int new_connection(const std::shared_ptr<stream> &strm, const std::shared_ptr<conf> &conf, const connection_cb_type &connection_cb)
 	{
-		return shared_from_this();
-	}
-	std::shared_ptr<mcl_http_t> get_c_ptr()
-	{
-		return c_ptr;
-	}
-
-	int new_connection(const std::shared_ptr<stream> &strm, const connection_cb_type &connection_cb)
-	{
+		struct _conn : conn { _conn(const std::shared_ptr<mcl_http_conn_t> &hc) : conn(hc) {} };
 		struct _Closure
 		{
 			_Closure(const std::shared_ptr<stream> &strm, const connection_cb_type &connection_cb) : strm(strm), connection_cb(connection_cb) {}
 
 			std::shared_ptr<stream> strm;
 			connection_cb_type connection_cb;
-			char conn_storage[sizeof(http_conn)];
+			char conn_storage[sizeof(conn)];
 		};
 		int err;
 		_Closure *closure = new _Closure(strm, connection_cb);
 
 		err = mcl_http_new_connection(
-			c_ptr.get(), strm->get_c_ptr().get(), closure,
+			strm->get_c_ptr().get(), conf->get_c_ptr().get(),
+			closure,
 			[](void *arg, mcl_http_conn_t *conn) {
 			_Closure *closure = (_Closure *)arg;
 			if (conn != nullptr) {
-				closure->connection_cb(mcl::http_conn::wrap(
-					std::shared_ptr<mcl_http_conn_t>(mcl_http_hold(conn), [](mcl_http_conn_t *conn) { mcl_http_release(conn); }),
-					closure->conn_storage));
+				closure->connection_cb(
+					std::shared_ptr<_conn>(
+						new(closure->conn_storage) _conn(
+							std::shared_ptr<mcl_http_conn_t>(mcl_http_hold(conn), [](mcl_http_conn_t *conn) { mcl_http_release(conn); })),
+						[](_conn *c) { c->~_conn(); }));
 			}
 			else {
 				closure->connection_cb(nullptr);
@@ -414,23 +474,6 @@ public:
 		return err;
 	}
 
-	static std::shared_ptr<http> create()
-	{
-		std::shared_ptr<http> r;
-		mcl_http_t *hs = mcl_http_create();
-		if (hs != nullptr)
-			r = std::shared_ptr<http>(new http(std::shared_ptr<mcl_http_t>(hs, [](mcl_http_t *hs) { mcl_http_destroy(hs); })));
-		return r;
-	}
-
-protected:
-	http(const std::shared_ptr<mcl_http_t> &hs) : c_ptr(hs) {}
-	http() = delete;
-	http(const http &) = delete;
-	http(http &&) = delete;
-
-private:
-	std::shared_ptr<mcl_http_t> c_ptr;
 };
 
 class server :

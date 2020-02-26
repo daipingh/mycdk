@@ -137,10 +137,10 @@ struct demo
 		struct sockaddr_in6 sa;
 		uv_ip6_addr("::", 1234, &sa);
 		std::shared_ptr<mcl::server> serv = mcl::server::tcp::create(uv_default_loop(), (struct sockaddr *)&sa);
-		std::shared_ptr<mcl::http> hs = mcl::http::create();
+		std::shared_ptr<mcl::http::conf> conf = mcl::http::conf::create();
 
 		serv->start(
-			[this, hs](const std::shared_ptr<mcl::stream> &_strm) {
+			[this, conf](const std::shared_ptr<mcl::stream> &_strm) {
 
 			char _ip[64] = { 0 };
 			struct sockaddr_in6 peername;
@@ -165,39 +165,45 @@ struct demo
 #if 1
 				int count = 0;
 				// http server.
-				hs->new_connection(strm,
-					[ip, port, count, strm] (const std::shared_ptr<mcl::http_conn> &conn) mutable {
+				mcl::http::new_connection(strm, conf,
+					[ip, port, count, strm](const std::shared_ptr<mcl::http::conn> &conn) mutable {
 
 					if (!conn.get())
 						printf("Del connection: %s:%d\n", ip.c_str(), port);
 					else {
-						conn->set_header("Content-Type", "text/plain");
+						//conn->set_header("Content-Type", "text/plain; charset=gb2312");
+						conn->set_header("Content-Type", "text/plain; charset=utf-8");
 						conn->set_header("Transfer-Encoding", "chunked");
 
-						char buf[256];
-						snprintf(buf, sizeof(buf), "%s", conn->get_path());
-						conn->write(buf, strlen(buf),
-							[conn, count](int status) {
-							const char *query = conn->get_query();
-							if (query && *query) {
-								char buf[256];
-								snprintf(buf, sizeof(buf), "?%s", query);
-								conn->write(buf, strlen(buf),
-									[conn](int status) {
+						const char *p;
+						std::string s;
+						s = conn->get_method() + std::string(" ") + conn->get_path();
+						printf("%d  %s\n", count, s.c_str());
 
-									conn->write(nullptr, 0,
-										[conn](int status) {
-										printf("%s\n", conn->get_path());
-									});
-								});
-							}
-							else {
-								conn->write(nullptr, 0,
-									[conn, count](int status) {
-									printf("%d  %s\n", count, conn->get_path());
-								});
-							}
+						p = conn->get_query(NULL);
+						if (p && *p)
+							s += std::string("?") + p;
+						s += "\r\n";
+
+						conn->send(s.c_str(), s.length(), [](int status) {});
+
+						conn->header_foreach(
+							[conn](const char *name, const char *value) {
+							std::string s(name + std::string(": ") + value + std::string("\r\n"));
+							conn->send(s.c_str(), s.length(), [](int status) {});
+							return 0;
 						});
+
+						conn->send("\r\n", 2, [](int status) {});
+
+						conn->query_foreach(
+							[conn](const char *name, const char *value) {
+							std::string s(name + std::string("=") + value + std::string("\r\n"));
+							conn->send(s.c_str(), s.length(), [](int status) {});
+							return 0;
+						});
+
+						conn->send(nullptr, 0, [](int status) {});
 
 						count += 1;
 						if (count == 6) {

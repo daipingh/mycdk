@@ -7,10 +7,12 @@ STATIC_ASSERT(sizeof(((mcl_urlparser_t *)0)->urlparser) >= sizeof(struct http_pa
 
 int mcl_url_parse(mcl_urlparser_t *parser, const char *url, size_t len)
 {
+	int result;
+	struct http_parser_url *p = (struct http_parser_url *)parser->urlparser;
 	parser->url = url;
-	http_parser_url_init((struct http_parser_url *)parser->urlparser);
-	parser->result = http_parser_parse_url(url, len, 0, (struct http_parser_url *)parser->urlparser);
-	return parser->result;
+	http_parser_url_init(p);
+	result = http_parser_parse_url(url, len, 0, p);
+	return result ? -1 : 0;
 }
 
 #define MCL_URL_GET_FUNCTION(_name, _NAME) \
