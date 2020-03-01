@@ -343,7 +343,7 @@ static int mcl_uvstream_get_prop(mcl_stream_t *strm, int name, void *val, int *l
 				return intval;
 			tmplen = sizeof(intval);
 			intval = 0;
-			if (getsockopt((uv_os_sock_t)fd, IPPROTO_TCP, TCP_NODELAY, (char *)&intval, &tmplen))
+			if (getsockopt((uv_os_sock_t)fd, IPPROTO_TCP, TCP_NODELAY, (char *)&intval, (socklen_t *)&tmplen))
 				return uv_translate_sys_error(errno);
 			get_prop__int64(val, len, intval);
 			return !!intval;
@@ -419,7 +419,7 @@ static int mcl_uvstream_set_prop(mcl_stream_t *strm, int name, const void *val, 
 
 mcl_stream_t *mcl_uvstream_wrap(uv_loop_t *loop, uv_stream_t *client, int *result)
 {
-	int i;
+	unsigned int i;
 	mcl_uvstream_t *handle;
 
 	handle = (mcl_uvstream_t *)malloc(sizeof(mcl_uvstream_t));
@@ -462,7 +462,8 @@ mcl_stream_t *mcl_uvstream_wrap(uv_loop_t *loop, uv_stream_t *client, int *resul
 
 mcl_stream_t *mcl_uvstream_accept(uv_loop_t *loop, uv_stream_t *server, int *result, uv_stream_t **client)
 {
-	int i, err;
+	int err;
+	unsigned int i;
 	mcl_uvstream_t *handle;
 
 	handle = (mcl_uvstream_t *)malloc(sizeof(mcl_uvstream_t));
@@ -1757,7 +1758,8 @@ static int mcl_sslstream_set_prop(mcl_stream_t *strm, int name, const void *val,
 
 mcl_stream_t *mcl_sslstream_wrap(uv_loop_t *loop, mcl_stream_t *stream, int is_server, void *ssl_ctx, int *result, void **ssl)
 {
-	int i, ret, err;
+	int ret, err;
+	unsigned int i;
 	mcl_sslstream_t *handle;
 
 	// 创建并初始化对象.

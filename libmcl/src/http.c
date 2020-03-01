@@ -5,6 +5,7 @@
 #include "utils.h"
 
 #include <llhttp.h>
+#include <uv/tree.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -451,7 +452,7 @@ static const llhttp_settings_t __parser_settings =
 
 static mcl_http_conn_t *mcl_http_conn__create(mcl_http_conf_t *conf)
 {
-	int i;
+	unsigned int i;
 	mcl_http_conn_t *conn;
 
 	conn = (mcl_http_conn_t *)malloc(sizeof(mcl_http_conn_t));
