@@ -1,6 +1,7 @@
 
 #include <mcl.hpp>
 #include <openssl/ssl.h>
+#include <map>
 #include <mutex>
 #include <thread>
 
@@ -30,7 +31,7 @@ static unsigned long thread_id(void)
 	static unsigned long id = 0;
 	static std::map<std::thread::id, unsigned long> map;
 	static std::mutex mutex;
-	std::lock_guard lg(mutex);
+	std::lock_guard<std::mutex> lg(mutex);
 	std::thread::id tid = std::this_thread::get_id();
 
 	auto ite = map.find(tid);
